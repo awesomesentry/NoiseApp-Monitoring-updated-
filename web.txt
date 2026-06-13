@@ -1,0 +1,475 @@
+Web Application Design & System Architecture
+IoT-Based Smart Classroom Noise Monitoring Using Traffic Light Indicator System
+Final System Design and Setup
+ 1. Web Dashboard (MAIN PAGE)
+This is the first page shown after login.
+Displayed Information:
+Total noise incidents today
+Red-level alerts this week
+Most noisy classroom (chart)
+Peak noise time (e.g., 10:00–11:00 AM)
+ Panel keyword: At-a-glance monitoring
+ 2. Noise Logs Page (CORE FEATURE)
+This page contains the primary system records.
+Each log entry shows:
+Date & Time
+Room / Classroom
+Noise Level (dB)
+Indicator Status (Green / Yellow / Red)
+Buzzer Triggered (Yes / No)
+Audio Recorded (Yes / No)
+Duration of Excessive Noise
+Filters:
+Date range
+Room
+Severity
+Subject / Teacher
+ 3. Audio Evidence Page (ADMIN ONLY)
+To ensure privacy and ethical use:
+Only RED-level events are shown
+Audio length is limited to 3–5 seconds
+Recordings are automatically deleted after a set retention period (7–14 days)
+Official policy statement:
+“Audio recordings are event-triggered, short, and access-controlled. The system does not support continuous recording or live listening.”
+ 4. System Settings Page (ADMIN ONLY)
+Configurable Parameters:
+Noise thresholds for Green / Yellow / Red
+Buzzer behavior:
+Enable / Disable
+Maximum number of beeps
+Cooldown interval (e.g., 10 seconds)
+Audio recording length (3–5 seconds)
+Alert cooldown duration
+ Demonstrates system flexibility and administrative control
+ 5. Reports & Analytics Page
+Used primarily for evaluation and decision support.
+Includes:
+Daily / weekly / monthly noise trends
+Bar chart of noise incidents per classroom
+Heatmap of noise intensity by time of day
+Export Options:
+PDF (official reports)
+CSV (data analysis)
+ Authorized User Functions
+ Authentication
+Username and password
+Role-based permissions
+Automatic session timeout
+ Authorization
+Teachers can access only their assigned classrooms
+Admins can access all classrooms and settings
+Configuration settings are admin-only
+ Audit Trail
+System logs:
+Threshold changes
+Buzzer configuration updates
+Audio access (who, when, which clip)
+ Controlled Teacher Access Model
+Teachers CAN:
+View RED-level events from their assigned classroom
+Listen to short audio clips (read-only)
+Access recordings within 24–48 hours only
+Teachers CANNOT:
+Download or share audio
+Access other classrooms
+Access long-term archives
+Delete records
+Access Policy Statement:
+“Teachers are granted limited, read-only access to short, event-triggered audio clips from their own classes for validation purposes only. All access is time-bound and logged.”
+ Technical Privacy Safeguards
+Time-Limited Access
+Teachers: 24–48 hours
+Admins: 7–14 days
+Read-Only Streaming
+Play button only
+No download
+No sharing
+Full Audit Logging
+User identity
+Timestamp
+Recording ID
+ UI Behavior Summary
+ Teacher View:
+Noise Level: 82 dB (RED)
+Time: 10:32 AM
+Action Button: “Review Clip (5 sec)”
+Room: ICT Lab 2
+Status Indicator: ​
+ Admin View:
+All teacher-visible data
+Threshold and escalation controls
+Retention policy settings
+Archive / delete controls
+ System Architecture
+High-Level Architecture (3 Layers)
+Layer 1 – Edge / Classroom Layer
+(Installed in each classroom)
+Hardware Components:
+ESP32 microcontroller
+INMP441 digital microphone (I2S – real audio sensing)
+Traffic light LEDs (Green / Yellow / Red)
+Buzzer
+Status LED (Wi-Fi & system state)
+Internal flash storage (NVS)
+Responsibilities:
+Continuous noise sampling (100–200 ms)
+dB computation and smoothing
+Escalation-based alert logic
+Event-triggered audio capture
+Offline event buffering
+Layer 2 – Backend / Server Layer
+(Centralized and secure)
+Components:
+REST API server
+PostgreSQL / Supabase database
+Secure audio storage
+Authentication & RBAC module
+Responsibilities:
+Store noise events and metadata
+Manage audio retention
+Enforce access control
+Provide data to the web dashboard
+Layer 3 – Web Application Layer
+(Teachers and Administrators)
+Components:
+Web dashboard (React / Vue / HTML)
+Charts and analytics
+Role-based UI views
+Responsibilities:
+Data visualization
+Event validation
+Analytics and reporting
+System configuration (admin only)
+ Complete System Flow
+Step 1: Continuous Noise Sampling
+INMP441 samples audio every 100–200 ms
+Converts signal to dB values
+Applies moving-average smoothing
+Step 2: Threshold Evaluation
+Example Thresholds:
+Green: < 60 dB
+Yellow: 60–74 dB
+Red: ≥ 75 dB
+IF dB < Green → Green LED
+ELSE IF dB < Red → Yellow LED
+ELSE → Red LED
+
+​
+Step 3: RED-Level Trigger (Event-Based)
+IF dB ≥ Red threshold
+FOR ≥ 2–3 seconds
+THEN confirm RED event
+
+​
+ Prevents false positives
+Step 4: Escalation-Based Buzzer Logic
+Loud ≥ 2 seconds → 1 short beep
+Loud ≥ 30 seconds → 2 short beeps
+Loud ≥ 60 seconds → Major violation logged
+ No continuous buzzing
+ Classroom-friendly alerts
+Limits:
+Max beeps per event
+Max total alert duration (e.g., 30 seconds)
+Step 5: Audio Capture
+Triggered only during confirmed RED events
+Records 3–5 seconds only
+No live listening
+No continuous recording
+Step 6: Offline-Safe Data Logging
+When Wi-Fi is unavailable:
+Noise Event → Stored in ESP32 Flash (NVS)
+Wi-Fi Restored → Automatic Cloud Sync
+
+​
+ No data loss
+ No reboot required
+Step 7: Web App Visualization
+Users log in
+Data displayed based on role permissions
+ Trigger Summary
+Trigger
+System Action
+dB enters Yellow
+Yellow LED
+dB sustained at Red
+Red LED
+Red event confirmed
+Log event
+Red event confirmed
+Record 3–5 sec audio
+Red event confirmed
+Buzzer escalation
+Data uploaded
+Dashboard update
+ Security & Ethics (Explicit)
+No continuous audio recording
+No live listening
+Role-based access control
+Time-bound audio availability
+Automatic deletion of recordings
+Full audit logging
+ Hotspot Setup Mode (Self-Configuration)
+When unconfigured, the ESP32 creates:
+SSID: Classroom-Noise-Setup
+IP:   192.168.4.1
+
+​
+Configurable via Web Page
+Network
+School Wi-Fi SSID
+School Wi-Fi password
+Classroom Identity
+Room name (e.g., “ICT Lab 2”)
+Building
+Device ID
+Noise Control
+Green / Yellow / Red thresholds
+Escalation timing (2s / 30s / 60s)
+Alerts
+Buzzer enable / disable
+Max beeps per event
+Cooldown duration
+Cloud
+API endpoint
+Device API key
+Maintenance
+Last 10 events
+Wi-Fi signal strength
+Last server contact
+Reboot device
+Factory reset
+Live logs like serial monitor
+ COMPLETE WIRING GUIDE
+Target board assumed: ESP32 Dev Module (WROOM-32)
+ ESP32 ↔ INMP441 (I2S Microphone)
+Your code uses I2S_NUM_0 with these pins:
+#define I2S_WS   25
+#define I2S_SD   33
+#define I2S_SCK  26
+
+​
+ Wiring
+INMP441 Pin
+ESP32 Pin
+Notes
+VDD
+3.3V
+ DO NOT use 5V
+GND
+GND
+Common ground
+WS / LRCL
+GPIO 25
+Word select
+SCK / BCLK
+GPIO 26
+Bit clock
+SD / DOUT
+GPIO 33
+Data out
+L/R
+GND
+Use LEFT channel
+ This is correct for mono input.
+ ESP32 ↔ SD Card Module (SPI)
+Your code:
+SPI.begin(18, 19, 23, SD_CS);
+#define SD_CS 5
+
+​
+ Wiring
+SD Module Pin
+ESP32 Pin
+CS
+GPIO 5
+SCK / CLK
+GPIO 18
+MISO
+GPIO 19
+MOSI
+GPIO 23
+VCC
+3.3V (preferred)
+GND
+GND
+ If your SD module has onboard regulator, 5V is OK.
+If unsure → use 3.3V.
+ ESP32 ↔ MP3 Player (Serial MP3 Player A)
+Your code:
+HardwareSerial mp3(2);
+mp3.begin(9600, SERIAL_8N1, 16, 17);
+
+​
+ Wiring
+MP3 Module Pin
+ESP32 Pin
+Notes
+RX
+GPIO 17
+ESP32 TX
+TX
+GPIO 16
+ESP32 RX
+VCC
+5V
+Required
+GND
+GND
+Common ground
+SPK+
+Speaker +
+SPK−
+Speaker −
+ MP3 module needs 5V for amplifier to work properly.
+ Speaker Wiring (MP3 Module Output)
+Speaker is NOT connected to ESP32.
+ Wiring
+Speaker
+Connect to
++
+MP3 SPK+
+−
+MP3 SPK−
+Recommended speaker:
+4Ω or 8Ω
+3W–5W
+ ESP32 ↔ LEDs (Traffic Light)
+Your code:
+#define LED_GREEN   14
+#define LED_YELLOW  12
+#define LED_RED     27
+
+​
+ Wiring (Each LED)
+ESP32 GPIO ── 220Ω resistor ── LED Anode (+)
+LED Cathode (−) ── GND
+
+​
+Pin mapping
+LED
+ESP32 Pin
+ Green
+GPIO 14
+ Yellow
+GPIO 12
+ Red
+GPIO 27
+ ESP32 Power
+Recommended:
+Source
+Use
+USB
+Development
+5V Adapter
+Stable testing
+Battery + Boost
+Final prototype
+ All grounds (GND) must be connected together.
+ Wi-Fi & Time (No Wiring Needed)
+Handled entirely in software:
+#include <WiFi.h>
+#include <time.h>
+
+​
+No extra hardware.
+ FULL PIN SUMMARY TABLE (CHEAT SHEET)
+Function
+ESP32 GPIO
+SD CS
+5
+SD SCK
+18
+SD MISO
+19
+SD MOSI
+23
+INMP441 WS
+25
+INMP441 SCK
+26
+INMP441 SD
+33
+MP3 RX
+16
+MP3 TX
+17
+Green LED
+14
+Yellow LED
+12
+Red LED
+27
+ESP32 pins to wire DS3231
+Default ESP32 I2C pins (what I set in code):
+SDA = GPIO 21
+SCL = GPIO 22
+VCC = 3.3V (most DS3231 boards accept 3.3V or 5V, but use 3.3V on ESP32)
+GND = GND
+I moved DS3231 I2C off the status LED pins:
+DS3231 SDA = GPIO32
+DS3231 SCL = GPIO4
+ IMPORTANT HARDWARE NOTES (PLEASE READ)
+ Do NOT power INMP441 with 5V
+ Do NOT share 5V MP3 power with ESP32 GPIO
+ Common GND is mandatory
+ MP3 boot delay (8s) in code is correct
+ SD SPI speed reduced → good for stability
+ Network / System Status LED
+State
+Color
+Pattern
+Brightness
+Booting
+ Blue
+Slow blink
+Dim
+AP / Setup mode
+ Blue
+Fast blink
+Dim
+Wi-Fi connected
+ Green
+Solid
+Dim
+Wi-Fi, no internet
+ Yellow
+Solid
+Dim
+Offline / error
+ Red
+Slow blink
+Medium
+BASIC COLOR LOGIC (COMMON CATHODE)
+Color
+R
+G
+B
+ Red
+ON
+OFF
+OFF
+ Green
+OFF
+ON
+OFF
+ Blue
+OFF
+OFF
+ON
+ Yellow
+ON
+ON
+OFF
+ Purple
+ON
+OFF
+ON
+ White
+ON
+ON
+ON
+ Off
+OFF
+OFF
+OFF

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Teacher Sign Up — Smart Classroom Noise Monitor</title>
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card login-card-wide">
+      <div class="traffic-dots">
+        <span class="g" title="Green"></span>
+        <span class="y" title="Yellow"></span>
+        <span class="r" title="Red"></span>
+      </div>
+      <h1>Create Teacher Account</h1>
+      <p class="subtitle">Register for read-only access to your assigned classroom</p>
+      <form id="signup-form">
+        <div class="form-group">
+          <label for="name">Full name</label>
+          <input type="text" id="name" name="name" required />
+        </div>
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" autocomplete="username" required />
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" minlength="6" required />
+        </div>
+        <div class="form-group">
+          <label for="confirm">Confirm password</label>
+          <input type="password" id="confirm" name="confirm" minlength="6" required />
+        </div>
+        <div class="form-group">
+          <label for="room">Assigned classroom</label>
+          <input type="text" id="room" name="room" placeholder="e.g. ICT Lab 2" required />
+        </div>
+        <p class="error-msg" id="signup-error"></p>
+        <p class="success-msg hidden" id="signup-success">Account created! Redirecting to login…</p>
+        <button type="submit" class="btn btn-primary">Create account</button>
+      </form>
+      <p class="login-footer-link">
+        Already registered? <a href="teacher-login.html">Sign in</a>
+      </p>
+      <div class="policy-banner compact-policy">
+        <strong>Access policy</strong>
+        Teachers get limited, read-only access to short RED-level audio clips from their own class only. Access is time-bound (24–48 hours) and logged.
+      </div>
+    </div>
+  </div>    <script src="js/config.js"></script>
+    <script src="js/api.js"></script>  <script src="js/teacher-auth.js"></script>
+  <script>
+    if (getTeacherSession()) window.location.href = "teacher-app.html";
+    document.getElementById("signup-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const err = document.getElementById("signup-error");
+      const ok = document.getElementById("signup-success");
+      err.classList.remove("visible");
+      ok.classList.add("hidden");
+
+      const password = document.getElementById("password").value;
+      const confirm = document.getElementById("confirm").value;
+      if (password !== confirm) {
+        err.textContent = "Passwords do not match.";
+        err.classList.add("visible");
+        return;
+      }
+
+      const result = signupTeacher({
+        name: document.getElementById("name").value,
+        email: document.getElementById("email").value,
+        password,
+        room: document.getElementById("room").value,
+      });
+
+      if (!result.ok) {
+        err.textContent = result.error;
+        err.classList.add("visible");
+        return;
+      }
+
+      ok.classList.remove("hidden");
+      setTimeout(() => {
+        window.location.href = "teacher-login.html";
+      }, 1500);
+    });
+  </script>
+</body>
+</html>
