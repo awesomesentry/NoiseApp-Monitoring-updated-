@@ -22,7 +22,7 @@ function initDefaultTeacherAccount() {
   if (accounts.some((a) => a.email === "teacher@school.edu")) return;
   accounts.push({
     id: "demo-teacher-1",
-    name: "Ms. Santos",
+    name: "Mr. Chiong, Joriz",
     email: "teacher@school.edu",
     password: "teacher123",
     assignedRooms: ["ICT Lab 2"],
