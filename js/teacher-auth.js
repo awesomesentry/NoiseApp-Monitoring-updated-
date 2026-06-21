@@ -1,98 +1,121 @@
-const TEACHER_ACCOUNTS_KEY = "noise_monitor_teacher_accounts";
+// ─── Teacher Auth using Supabase Auth (GoTrue) + profiles/teacher_classrooms/teacher_schedules ───
 const TEACHER_SESSION_KEY = "noise_monitor_teacher_session";
-const TEACHER_SCHEDULES_KEY = "noise_monitor_teacher_schedules";
 const TEACHER_ACCESS_HOURS = 48;
 const TEACHER_SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
-function getTeacherAccounts() {
+// ─── Login ───
+async function loginTeacher(email, password) {
   try {
-    const raw = localStorage.getItem(TEACHER_ACCOUNTS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
+    const authData = await signInWithPassword(email, password);
+    const { access_token, refresh_token, user } = authData;
+    if (!access_token || !user) return null;
+
+    // Save auth token
+    saveAuthToken(access_token, refresh_token);
+
+    // Load profile
+    let profile = await getProfileById(user.id);
+    if (!profile) {
+      // Create profile automatically for new teacher signups (from admin or signup flow)
+      return null; // Teacher must be created via signup or admin first
+    }
+
+    // Only teachers can sign in via teacher portal
+    if (profile.role !== "teacher") {
+      return null;
+    }
+
+    // Load assigned classrooms
+    const assignedClassrooms = await fetchTeacherClassrooms(user.id);
+    const assignedRooms = assignedClassrooms.map(c => c.name).filter(Boolean);
+    const deviceIds = []; // Device IDs would be set via admin
+
+    // Build session
+    const session = {
+      id: user.id,
+      username: user.email,
+      email: user.email,
+      role: "teacher",
+      name: profile.full_name || user.email,
+      assignedRooms: assignedRooms,
+      deviceIds: deviceIds,
+      loginAt: Date.now(),
+      lastActivity: Date.now(),
+      accessToken: access_token,
+      refreshToken: refresh_token,
+    };
+
+    sessionStorage.setItem(TEACHER_SESSION_KEY, JSON.stringify(session));
+    setCurrentSessionInfo({ profile: { id: user.id, role: "teacher" } });
+
+    await logTeacherAudit("Teacher login", `${session.email} signed in`);
+    return session;
+  } catch (e) {
+    console.warn("Teacher login failed:", e);
+    return null;
   }
 }
 
-function saveTeacherAccounts(accounts) {
-  localStorage.setItem(TEACHER_ACCOUNTS_KEY, JSON.stringify(accounts));
-}
+// ─── Sign up (creates auth user + profile) ───
+async function signupTeacher({ name, email, password, room }) {
+  try {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (password.length < 6) {
+      return { ok: false, error: "Password must be at least 6 characters." };
+    }
 
-function initDefaultTeacherAccount() {
-  const accounts = getTeacherAccounts();
-  if (accounts.some((a) => a.email === "teacher@school.edu")) return;
-  accounts.push({
-    id: "demo-teacher-1",
-    name: "Mr. Chiong, Joriz",
-    email: "teacher@school.edu",
-    password: "teacher123",
-    assignedRooms: ["ICT Lab 2"],
-    deviceIds: ["esp32_noise_01"],
-    defaultSubject: "ICT",
-    createdAt: new Date().toISOString(),
-  });
-  saveTeacherAccounts(accounts);
-}
+    // Create user via Supabase Auth
+    const authData = await signUpWithPassword(normalizedEmail, password);
+    const user = authData.user || authData;
+    if (!user || !user.id) {
+      return { ok: false, error: authData.msg || "Failed to create account. The email may already be registered." };
+    }
 
-function signupTeacher({ name, email, password, room }) {
-  const normalizedEmail = email.trim().toLowerCase();
-  const accounts = getTeacherAccounts();
+    // Create profile
+    await upsertProfile(user.id, {
+      role: "teacher",
+      full_name: name.trim(),
+      mobile: null,
+    });
 
-  if (accounts.some((a) => a.email === normalizedEmail)) {
-    return { ok: false, error: "An account with this email already exists." };
+    // If a classroom name was provided, find or create it and link
+    if (room && room.trim()) {
+      try {
+        // Find classroom by name
+        const classrooms = await fetchClassrooms();
+        let classroom = classrooms.find(
+          c => c.name.toLowerCase() === room.trim().toLowerCase()
+        );
+        if (!classroom) {
+          // Create new classroom
+          const newClassroom = await supabasePost(TABLES.classrooms, { name: room.trim() });
+          classroom = Array.isArray(newClassroom) ? newClassroom[0] : newClassroom;
+        }
+        if (classroom && classroom.id) {
+          await setTeacherClassrooms(user.id, [classroom.id]);
+        }
+      } catch (e) {
+        console.warn("Failed to link classroom:", e);
+      }
+    }
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
   }
-  if (password.length < 6) {
-    return { ok: false, error: "Password must be at least 6 characters." };
-  }
-
-  accounts.push({
-    id: `teacher-${Date.now()}`,
-    name: name.trim(),
-    email: normalizedEmail,
-    password,
-    assignedRooms: room.trim() ? [room.trim()] : [],
-    deviceIds: [],
-    defaultSubject: "",
-    createdAt: new Date().toISOString(),
-  });
-  saveTeacherAccounts(accounts);
-  return { ok: true };
 }
 
 async function logTeacherAudit(action, detail = "") {
   if (typeof insertAuditLog !== "function") return;
   try {
     const session = getTeacherSession();
-    await insertAuditLog({
-      action,
-      user_name: session?.username || "teacher",
-      detail,
-    });
+    const record = { action, detail };
+    record.user_name = session?.email || "teacher";
+    if (session?.id) record.actor_id = session.id;
+    await insertAuditLog(record);
   } catch (e) {
     console.warn("Audit log failed:", e);
   }
-}
-
-async function loginTeacher(email, password) {
-  initDefaultTeacherAccount();
-  const normalizedEmail = email.trim().toLowerCase();
-  const account = getTeacherAccounts().find(
-    (a) => a.email === normalizedEmail && a.password === password
-  );
-  if (!account) return null;
-
-  const session = {
-    id: account.id,
-    username: account.email,
-    role: "teacher",
-    name: account.name,
-    assignedRooms: account.assignedRooms || [],
-    deviceIds: account.deviceIds || [],
-    loginAt: Date.now(),
-    lastActivity: Date.now(),
-  };
-  sessionStorage.setItem(TEACHER_SESSION_KEY, JSON.stringify(session));
-  await logTeacherAudit("Teacher login", `${session.username} signed in`);
-  return session;
 }
 
 function getTeacherSession() {
@@ -121,9 +144,14 @@ function touchTeacherSession() {
 async function teacherLogout() {
   const session = getTeacherSession();
   if (session) {
-    await logTeacherAudit("Teacher logout", `${session.username} signed out`);
+    await logTeacherAudit("Teacher logout", `${session.email} signed out`);
+    try {
+      await signOutUser(session.accessToken);
+    } catch (_) {}
   }
   sessionStorage.removeItem(TEACHER_SESSION_KEY);
+  clearAuthToken();
+  setCurrentSessionInfo(null);
   if (typeof stopTeacherAutoRefresh === 'function') try { stopTeacherAutoRefresh(); } catch (_) {}
   if (typeof stopAutoRefresh === 'function') try { stopAutoRefresh(); } catch (_) {}
   await new Promise(r => setTimeout(r, 100));
@@ -140,55 +168,99 @@ function requireTeacherAuth() {
   return session;
 }
 
-function getTeacherSchedulesStore() {
+// ─── Teacher Schedule (database-backed) ───
+async function getTeacherScheduleDb(teacherId) {
   try {
-    const raw = localStorage.getItem(TEACHER_SCHEDULES_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
+    const slots = await fetchTeacherSchedules(teacherId);
+    return { slots: slots || [] };
+  } catch (_) {
+    return { slots: [] };
   }
 }
 
-function saveTeacherSchedulesStore(store) {
-  localStorage.setItem(TEACHER_SCHEDULES_KEY, JSON.stringify(store));
+async function saveTeacherScheduleDb(teacherId, schedule) {
+  // schedule is { slots: [...] }
+  // We do a diff-based approach: fetch existing, delete removed, add new
+  const existing = await fetchTeacherSchedules(teacherId);
+  const existingIds = new Set(existing.map(s => s.id));
+  const newSlots = schedule.slots || [];
+
+  // Remove slots that are no longer present
+  const newSlotKeys = new Set(newSlots.map(s => s._clientId || s.id));
+  for (const ex of existing) {
+    if (!newSlotKeys.has(ex.id) && !newSlotKeys.has(ex._clientId)) {
+      try {
+        await deleteTeacherSchedule(ex.id);
+      } catch (_) {}
+    }
+  }
+
+  // Add or update slots
+  for (const slot of newSlots) {
+    if (slot.id && existingIds.has(slot.id)) {
+      // Update existing
+      await upsertTeacherSchedule({
+        id: slot.id,
+        teacher_id: teacherId,
+        day: slot.day,
+        start_time: slot.startTime,
+        end_time: slot.endTime,
+        subject: slot.subject,
+        room: slot.room,
+      });
+    } else {
+      // Create new
+      await upsertTeacherSchedule({
+        teacher_id: teacherId,
+        day: slot.day,
+        start_time: slot.startTime,
+        end_time: slot.endTime,
+        subject: slot.subject,
+        room: slot.room,
+      });
+    }
+  }
 }
 
-function getTeacherSchedule(teacherId) {
-  const store = getTeacherSchedulesStore();
-  return store[teacherId] || { slots: [], defaultSubject: "" };
+async function addTeacherScheduleSlot(teacherId, slot) {
+  return upsertTeacherSchedule({
+    teacher_id: teacherId,
+    day: slot.day,
+    start_time: slot.startTime,
+    end_time: slot.endTime,
+    subject: slot.subject,
+    room: slot.room,
+  });
 }
 
-function saveTeacherSchedule(teacherId, schedule) {
-  const store = getTeacherSchedulesStore();
-  store[teacherId] = schedule;
-  saveTeacherSchedulesStore(store);
+async function removeTeacherScheduleSlot(slotId) {
+  return deleteTeacherSchedule(slotId);
 }
 
-function updateTeacherAccountProfile(teacherId, updates) {
-  const accounts = getTeacherAccounts();
-  const idx = accounts.findIndex((a) => a.id === teacherId);
-  if (idx === -1) return false;
-  accounts[idx] = { ...accounts[idx], ...updates };
-  saveTeacherAccounts(accounts);
-  return true;
+// ─── Profile update ───
+async function updateTeacherProfile(teacherId, updates) {
+  return upsertProfile(teacherId, updates);
 }
 
-function getTeacherAccountById(teacherId) {
-  return getTeacherAccounts().find((a) => a.id === teacherId) || null;
+// ─── Sync session with latest data from DB ───
+async function syncTeacherSessionFromDb(session) {
+  if (!session) return null;
+  try {
+    const profile = await getProfileById(session.id);
+    if (!profile) return session;
+    const classrooms = await fetchTeacherClassrooms(session.id);
+    const assignedRooms = classrooms.map(c => c.name).filter(Boolean);
+    return {
+      ...session,
+      name: profile.full_name || session.name,
+      assignedRooms: assignedRooms,
+    };
+  } catch (_) {
+    return session;
+  }
 }
 
-function syncTeacherSessionFromAccount(session) {
-  const account = getTeacherAccountById(session.id);
-  if (!account) return session;
-  return {
-    ...session,
-    name: account.name,
-    assignedRooms: account.assignedRooms || [],
-    deviceIds: account.deviceIds || [],
-    defaultSubject: account.defaultSubject || "",
-  };
-}
-
+// ─── Utility functions (unchanged from localStorage version) ───
 function getTeacherRemainingSessionMs(session) {
   return Math.max(0, TEACHER_SESSION_TIMEOUT_MS - (Date.now() - session.lastActivity));
 }
@@ -229,8 +301,8 @@ function teacherNameMatches(logTeacher, sessionName) {
   return a === b || a.includes(b) || b.includes(a);
 }
 
-function eventMatchesTeacherSchedule(log, session) {
-  const schedule = getTeacherSchedule(session.id);
+async function eventMatchesTeacherSchedule(log, session) {
+  const schedule = await getTeacherScheduleDb(session.id);
   const slots = schedule.slots || [];
   if (slots.length === 0) return false;
 
@@ -240,20 +312,28 @@ function eventMatchesTeacherSchedule(log, session) {
   const eventMins = eventDate.getHours() * 60 + eventDate.getMinutes();
 
   return slots.some((slot) => {
-    if (slot.day !== eventDay) return false;
-    const [sh, sm] = (slot.startTime || "00:00").split(":").map(Number);
-    const [eh, em] = (slot.endTime || "23:59").split(":").map(Number);
-    const startMins = sh * 60 + sm;
-    const endMins = eh * 60 + em;
+    const slotDay = slot.day ? slot.day.substring(0, 3) : slot.day;
+    const shortDay = dayNames.includes(slotDay) ? slotDay : (slot.day || "");
+    if (shortDay !== eventDay) return false;
+
+    // Handle both time formats (HH:MM:SS or HH:MM)
+    const startStr = slot.start_time || slot.startTime || "00:00";
+    const endStr = slot.end_time || slot.endTime || "23:59";
+    const [sh, sm] = startStr.split(":").map(Number);
+    const [eh, em] = endStr.split(":").map(Number);
+    const startMins = sh * 60 + (sm || 0);
+    const endMins = eh * 60 + (em || 0);
     if (eventMins < startMins || eventMins > endMins) return false;
-    if (slot.subject && slot.subject !== "—" && log.subject && log.subject !== "—") {
-      return normalizeName(log.subject).includes(normalizeName(slot.subject));
+
+    const slotSubject = slot.subject || "";
+    if (slotSubject && slotSubject !== "—" && log.subject && log.subject !== "—") {
+      return normalizeName(log.subject).includes(normalizeName(slotSubject));
     }
     return true;
   });
 }
 
-function matchesTeacherEvent(log, session) {
+async function matchesTeacherEvent(log, session) {
   if (!session) return false;
 
   const roomMatch = matchesTeacherAssignment(log, session);
@@ -290,19 +370,19 @@ function filterLogsByDateTime(logs, fromDate, toDate, fromTime, toTime) {
   });
 }
 
-function filterTeacherEvents(logs, session) {
-  return logs.filter(
-    (l) =>
-      isRedEvent(l) &&
-      matchesTeacherEvent(l, session) &&
-      isWithinTeacherAccessWindow(l.datetime)
-  );
+async function filterTeacherEvents(logs, session) {
+  const results = [];
+  for (const l of logs) {
+    if (isRedEvent(l) && await matchesTeacherEvent(l, session) && isWithinTeacherAccessWindow(l.datetime)) {
+      results.push(l);
+    }
+  }
+  return results;
 }
 
-function filterTeacherAudioLogs(logs, session) {
-  return filterTeacherEvents(logs, session).filter(
-    (l) => l.audioRecorded && l.audioUrl
-  );
+async function filterTeacherAudioLogs(logs, session) {
+  const events = await filterTeacherEvents(logs, session);
+  return events.filter((l) => l.audioRecorded && l.audioUrl);
 }
 
 function formatAccessWindowRemaining(datetime) {
@@ -313,5 +393,3 @@ function formatAccessWindowRemaining(datetime) {
   if (hours >= 24) return `${Math.floor(hours / 24)}d ${hours % 24}h left`;
   return `${hours}h left`;
 }
-
-initDefaultTeacherAccount();

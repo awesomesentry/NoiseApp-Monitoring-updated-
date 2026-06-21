@@ -1,44 +1,52 @@
-const USERS = {
-  admin: {
-    password: "admin123",
-    role: "admin",
-    name: "System Administrator",
-    assignedRooms: [],
-  },
-};
-
+// ─── Auth using Supabase Auth (GoTrue) + profiles table ───
 const SESSION_KEY = "noise_monitor_session";
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
-async function logAdminAudit(action, detail = "") {
-  if (typeof insertAuditLog !== "function") return;
+// ─── Login: authenticates via Supabase Auth, then loads profile ───
+async function login(email, password) {
   try {
-    const session = getSession();
-    await insertAuditLog({
-      action,
-      user_name: session?.username || "admin",
-      detail,
-    });
-  } catch (e) {
-    console.warn("Audit log failed:", e);
-  }
-}
+    const authData = await signInWithPassword(email, password);
+    const { access_token, refresh_token, user } = authData;
+    if (!access_token || !user) return null;
 
-async function login(username, password) {
-  const user = USERS[username.trim().toLowerCase()];
-  if (!user || user.password !== password) return null;
-  const session = {
-    username: username.trim().toLowerCase(),
-    role: user.role,
-    name: user.name,
-    assignedRooms: user.assignedRooms || [],
-    deviceIds: user.deviceIds || [],
-    loginAt: Date.now(),
-    lastActivity: Date.now(),
-  };
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  await logAdminAudit("Admin login", `${session.username} signed in`);
-  return session;
+    // Save the auth token
+    saveAuthToken(access_token, refresh_token);
+
+    // Load or create profile
+    let profile = await getProfileById(user.id);
+    if (!profile) {
+      // First login — create profile with default role
+      await upsertProfile(user.id, {
+        role: "admin",
+        full_name: user.email,
+        mobile: null,
+      });
+      profile = await getProfileById(user.id);
+    }
+
+    // Build session
+    const session = {
+      id: user.id,
+      email: user.email,
+      role: profile?.role || "admin",
+      name: profile?.full_name || user.email,
+      assignedRooms: [],
+      deviceIds: [],
+      loginAt: Date.now(),
+      lastActivity: Date.now(),
+      accessToken: access_token,
+      refreshToken: refresh_token,
+    };
+
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    setCurrentSessionInfo({ profile: { id: user.id, role: session.role } });
+
+    await logAdminAudit("Admin login", `${session.email} signed in`);
+    return session;
+  } catch (e) {
+    console.warn("Login failed:", e);
+    return null;
+  }
 }
 
 function getSession() {
@@ -67,9 +75,15 @@ function touchSession() {
 async function logout() {
   const session = getSession();
   if (session) {
-    await logAdminAudit("Admin logout", `${session.username} signed out`);
+    await logAdminAudit("Admin logout", `${session.email} signed out`);
+    // Sign out from Supabase Auth
+    try {
+      await signOutUser(session.accessToken);
+    } catch (_) {}
   }
   sessionStorage.removeItem(SESSION_KEY);
+  clearAuthToken();
+  setCurrentSessionInfo(null);
   if (typeof stopAutoRefresh === 'function') try { stopAutoRefresh(); } catch (_) {}
   if (typeof stopTeacherAutoRefresh === 'function') try { stopTeacherAutoRefresh(); } catch (_) {}
   await new Promise(r => setTimeout(r, 100));
@@ -101,4 +115,17 @@ function filterLogsForUser(logs, sess) {
 
 function getRemainingSessionMs(session) {
   return Math.max(0, SESSION_TIMEOUT_MS - (Date.now() - session.lastActivity));
+}
+
+async function logAdminAudit(action, detail = "") {
+  if (typeof insertAuditLog !== "function") return;
+  try {
+    const session = getSession();
+    const record = { action, detail };
+    record.user_name = session?.email || "admin";
+    if (session?.id) record.actor_id = session.id;
+    await insertAuditLog(record);
+  } catch (e) {
+    console.warn("Audit log failed:", e);
+  }
 }
