@@ -53,7 +53,7 @@
     <script src="js/api.js"></script>  <script src="js/teacher-auth.js"></script>
   <script>
     if (getTeacherSession()) window.location.href = "teacher-app.html";
-    document.getElementById("signup-form").addEventListener("submit", (e) => {
+    document.getElementById("signup-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const err = document.getElementById("signup-error");
       const ok = document.getElementById("signup-success");
@@ -68,7 +68,7 @@
         return;
       }
 
-      const result = signupTeacher({
+      const result = await signupTeacher({
         name: document.getElementById("name").value,
         email: document.getElementById("email").value,
         password,

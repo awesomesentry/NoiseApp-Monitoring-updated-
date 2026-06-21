@@ -97,9 +97,11 @@ function renderEventCard(l, options = {}) {
     </div>`;
 }
 
-function getTeacherScheduleSlotForEvent(log, session) {
-  const schedule = getTeacherSchedule(session.id);
-  const slots = schedule.slots || [];
+// ─── DB-backed schedule helpers ───
+async function getTeacherScheduleSlotForEvent(log, session) {
+  if (!session) return null;
+  const scheduleSlots = await fetchTeacherSchedules(session.id);
+  const slots = scheduleSlots || [];
   if (!slots.length) return null;
 
   const eventDate = new Date(log.datetime);
@@ -108,26 +110,32 @@ function getTeacherScheduleSlotForEvent(log, session) {
   const eventMins = eventDate.getHours() * 60 + eventDate.getMinutes();
 
   return slots.find((slot) => {
-    if (slot.day !== eventDay) return false;
-    const [sh, sm] = (slot.startTime || "00:00").split(":").map(Number);
-    const [eh, em] = (slot.endTime || "23:59").split(":").map(Number);
-    const startMins = sh * 60 + sm;
-    const endMins = eh * 60 + em;
+    const slotDay = slot.day ? slot.day.substring(0, 3) : slot.day;
+    if (slotDay !== eventDay) return false;
+
+    const startStr = slot.start_time || slot.startTime || "00:00";
+    const endStr = slot.end_time || slot.endTime || "23:59";
+    const [sh, sm] = startStr.split(":").map(Number);
+    const [eh, em] = endStr.split(":").map(Number);
+    const startMins = sh * 60 + (sm || 0);
+    const endMins = eh * 60 + (em || 0);
     if (eventMins < startMins || eventMins > endMins) return false;
-    if (slot.subject && slot.subject !== "—" && log.subject && log.subject !== "—") {
-      return normalizeName(log.subject).includes(normalizeName(slot.subject));
+
+    const slotSubject = slot.subject || "";
+    if (slotSubject && slotSubject !== "—" && log.subject && log.subject !== "—") {
+      return normalizeName(log.subject).includes(normalizeName(slotSubject));
     }
     return true;
   });
 }
 
-function decorateTeacherEventForDisplay(log, session) {
+async function decorateTeacherEventForDisplay(log, session) {
   if (!session) return log;
-  const slot = getTeacherScheduleSlotForEvent(log, session);
+  const slot = await getTeacherScheduleSlotForEvent(log, session);
   const subject =
     (slot?.subject && slot.subject !== "—")
       ? slot.subject
-      : session.defaultSubject || log.subject || "—";
+      : (session.defaultSubject || log.subject || "—");
   const teacher = session.name || log.teacher || "—";
   return { ...log, subject, teacher };
 }
@@ -180,8 +188,10 @@ async function renderTeacherDashboard() {
   showLoading();
   try {
     const allLogs = await loadNoiseEvents();
-    const events = filterTeacherEvents(allLogs, teacherSession).map((l) => decorateTeacherEventForDisplay(l, teacherSession));
-    const withAudio = filterTeacherAudioLogs(allLogs, teacherSession).map((l) => decorateTeacherEventForDisplay(l, teacherSession));
+    const rawEvents = await filterTeacherEvents(allLogs, teacherSession);
+    const events = await Promise.all(rawEvents.map((l) => decorateTeacherEventForDisplay(l, teacherSession)));
+    const rawWithAudio = await filterTeacherAudioLogs(allLogs, teacherSession);
+    const withAudio = await Promise.all(rawWithAudio.map((l) => decorateTeacherEventForDisplay(l, teacherSession)));
 
     document.getElementById("page-content").innerHTML = `
       ${renderTeacherPolicyBanner()}
@@ -230,7 +240,8 @@ async function renderTeacherEvents() {
   showLoading();
   try {
     const allLogs = await loadNoiseEvents();
-    const events = filterTeacherEvents(allLogs, teacherSession).map((l) => decorateTeacherEventForDisplay(l, teacherSession));
+    const rawEvents = await filterTeacherEvents(allLogs, teacherSession);
+    const events = await Promise.all(rawEvents.map((l) => decorateTeacherEventForDisplay(l, teacherSession)));
     let currentPage = 1;
     let filterFrom = teacherEventState.filterFrom;
     let filterTo = teacherEventState.filterTo;
@@ -318,9 +329,16 @@ async function renderTeacherEvents() {
   }
 }
 
-function renderTeacherSchedulePage() {
-  const schedule = getTeacherSchedule(teacherSession.id);
-  let editingIndex = null;
+async function renderTeacherSchedulePage() {
+  if (!teacherSession) {
+    teacherSession = requireTeacherAuth();
+    if (!teacherSession) return;
+  }
+
+  // Fetch schedule from DB
+  let scheduleSlots = await fetchTeacherSchedules(teacherSession.id);
+  if (!scheduleSlots) scheduleSlots = [];
+  let editingId = null; // client-side tracking index
 
   document.getElementById("page-content").innerHTML = `
     <div class="policy-banner">
@@ -333,12 +351,12 @@ function renderTeacherSchedulePage() {
         <div class="form-group">
           <label for="slot-day">Day</label>
           <select id="slot-day">
-            <option value="Mon">Monday</option>
-            <option value="Tue">Tuesday</option>
-            <option value="Wed">Wednesday</option>
-            <option value="Thu">Thursday</option>
-            <option value="Fri">Friday</option>
-            <option value="Sat">Saturday</option>
+            <option value="Monday">Monday</option>
+            <option value="Tuesday">Tuesday</option>
+            <option value="Wednesday">Wednesday</option>
+            <option value="Thursday">Thursday</option>
+            <option value="Friday">Friday</option>
+            <option value="Saturday">Saturday</option>
           </select>
         </div>
         <div class="form-group">
@@ -369,58 +387,61 @@ function renderTeacherSchedulePage() {
     </div>
   `;
 
+  // Helper functions
+  function dayToShort(day) {
+    const m = {Monday:"Mon",Tuesday:"Tue",Wednesday:"Wed",Thursday:"Thu",Friday:"Fri",Saturday:"Sat",Sunday:"Sun"};
+    return m[day] || day.substring(0,3);
+  }
+
+  function shortToDay(short) {
+    const m = {Mon:"Monday",Tue:"Tuesday",Wed:"Wednesday",Thu:"Thursday",Fri:"Friday",Sat:"Saturday",Sun:"Sunday"};
+    return m[short] || short;
+  }
+
   function isTimeOverlap(a, b) {
-    const [aStartH, aStartM] = a.startTime.split(":").map(Number);
-    const [aEndH, aEndM] = a.endTime.split(":").map(Number);
-    const [bStartH, bStartM] = b.startTime.split(":").map(Number);
-    const [bEndH, bEndM] = b.endTime.split(":").map(Number);
-    const aStart = aStartH * 60 + aStartM;
-    const aEnd = aEndH * 60 + aEndM;
-    const bStart = bStartH * 60 + bStartM;
-    const bEnd = bEndH * 60 + bEndM;
+    const [aStartH, aStartM] = (a.startTime || a.start_time || "00:00").split(":").map(Number);
+    const [aEndH, aEndM] = (a.endTime || a.end_time || "23:59").split(":").map(Number);
+    const [bStartH, bStartM] = (b.startTime || b.start_time || "00:00").split(":").map(Number);
+    const [bEndH, bEndM] = (b.endTime || b.end_time || "23:59").split(":").map(Number);
+    const aStart = aStartH * 60 + (aStartM || 0);
+    const aEnd = aEndH * 60 + (aEndM || 0);
+    const bStart = bStartH * 60 + (bStartM || 0);
+    const bEnd = bEndH * 60 + (bEndM || 0);
     return aStart < bEnd && bStart < aEnd;
   }
 
-  function validateSlot(slot, slots, excludedIndex = null) {
+  function validateSlot(slot, slots, excludedIdx) {
     if (!slot.startTime || !slot.endTime) {
       return "Start and end time are required.";
     }
     if (slot.startTime >= slot.endTime) {
       return "End time must be after start time.";
     }
-    const normalizedSubject = normalizeName(slot.subject || "");
-    const normalizedRoom = normalizeName(slot.room || "");
+    const ns = (v) => (v || "").trim().toLowerCase();
 
     for (let idx = 0; idx < slots.length; idx++) {
-      if (idx === excludedIndex) continue;
+      if (idx === excludedIdx) continue;
       const existing = slots[idx];
+      const exDay = existing.day || existing.day;
       if (
-        existing.day === slot.day &&
-        existing.startTime === slot.startTime &&
-        existing.endTime === slot.endTime &&
-        normalizeName(existing.subject || "") === normalizedSubject &&
-        normalizeName(existing.room || "") === normalizedRoom
+        exDay === slot.day &&
+        (existing.startTime || existing.start_time) === slot.startTime &&
+        (existing.endTime || existing.end_time) === slot.endTime &&
+        ns(existing.subject || "") === ns(slot.subject || "") &&
+        ns(existing.room || "") === ns(slot.room || "")
       ) {
         return "This schedule slot already exists.";
       }
-      if (existing.day === slot.day && isTimeOverlap(existing, slot)) {
+      if (exDay === slot.day && isTimeOverlap(existing, slot)) {
         return "Cannot add slot: this time slot overlaps with another on the same day.";
-      }
-      if (
-        existing.day === slot.day &&
-        normalizedSubject &&
-        normalizeName(existing.subject || "") === normalizedSubject &&
-        isTimeOverlap(existing, slot)
-      ) {
-        return "This subject already has a conflicting time slot on the same day.";
       }
     }
     return null;
   }
 
   function resetForm() {
-    editingIndex = null;
-    document.getElementById("slot-day").value = "Mon";
+    editingId = null;
+    document.getElementById("slot-day").value = "Monday";
     document.getElementById("slot-start").value = "08:00";
     document.getElementById("slot-end").value = "09:00";
     document.getElementById("slot-subject").value = "";
@@ -433,24 +454,26 @@ function renderTeacherSchedulePage() {
     errorEl.textContent = "";
   }
 
-  function renderSlotsList() {
-    const current = getTeacherSchedule(teacherSession.id);
+  async function renderSlotsList() {
+    // Refresh from DB
+    scheduleSlots = await fetchTeacherSchedules(teacherSession.id);
+    if (!scheduleSlots) scheduleSlots = [];
+
     const list = document.getElementById("schedule-slots-list");
     const empty = document.getElementById("no-slots-msg");
-    const slots = current.slots || [];
 
-    if (slots.length === 0) {
+    if (scheduleSlots.length === 0) {
       list.innerHTML = "";
       empty.classList.remove("hidden");
       return;
     }
     empty.classList.add("hidden");
-    list.innerHTML = slots
+    list.innerHTML = scheduleSlots
       .map(
         (slot, idx) => `
       <li>
         <div class="schedule-slot-info">
-          <strong>${slot.day}</strong> · ${slot.startTime}–${slot.endTime}
+          <strong>${dayToShort(slot.day)}</strong> · ${(slot.start_time || slot.startTime || "").substring(0,5)}–${(slot.end_time || slot.endTime || "").substring(0,5)}
           <div class="schedule-slot-meta">
             ${slot.subject || "—"} · ${slot.room || teacherSession.assignedRooms[0] || "—"}
           </div>
@@ -465,28 +488,32 @@ function renderTeacherSchedulePage() {
       .join("");
 
     list.querySelectorAll(".edit-slot").forEach((btn) => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         const idx = parseInt(btn.dataset.idx, 10);
-        const s = getTeacherSchedule(teacherSession.id);
-        const slot = s.slots[idx];
-        editingIndex = idx;
-        document.getElementById("slot-day").value = slot.day;
-        document.getElementById("slot-start").value = slot.startTime;
-        document.getElementById("slot-end").value = slot.endTime;
-        document.getElementById("slot-subject").value = slot.subject;
-        document.getElementById("slot-room").value = slot.room;
+        const slot = scheduleSlots[idx];
+        if (!slot) return;
+        editingId = idx;
+        const fullDay = shortToDay(dayToShort(slot.day)) || "Monday";
+        document.getElementById("slot-day").value = fullDay;
+        document.getElementById("slot-start").value = (slot.start_time || slot.startTime || "08:00").substring(0,5);
+        document.getElementById("slot-end").value = (slot.end_time || slot.endTime || "09:00").substring(0,5);
+        document.getElementById("slot-subject").value = slot.subject || "";
+        document.getElementById("slot-room").value = slot.room || "";
         document.getElementById("add-slot-btn").textContent = "Save slot";
         document.getElementById("cancel-edit-btn").classList.remove("hidden");
       });
     });
 
     list.querySelectorAll(".remove-slot").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const s = getTeacherSchedule(teacherSession.id);
-        s.slots.splice(parseInt(btn.dataset.idx, 10), 1);
-        saveTeacherSchedule(teacherSession.id, s);
+      btn.addEventListener("click", async () => {
+        const idx = parseInt(btn.dataset.idx, 10);
+        const slot = scheduleSlots[idx];
+        if (slot && slot.id) {
+          await removeTeacherScheduleSlot(slot.id);
+        }
+        scheduleSlots.splice(idx, 1);
         resetForm();
-        renderSlotsList();
+        await renderSlotsList();
       });
     });
   }
@@ -495,7 +522,7 @@ function renderTeacherSchedulePage() {
   const addSlotBtn = document.getElementById("add-slot-btn");
   const cancelEditBtn = document.getElementById("cancel-edit-btn");
 
-  addSlotBtn.addEventListener("click", () => {
+  addSlotBtn.addEventListener("click", async () => {
     const slot = {
       day: document.getElementById("slot-day").value,
       startTime: document.getElementById("slot-start").value,
@@ -504,9 +531,7 @@ function renderTeacherSchedulePage() {
       room: document.getElementById("slot-room").value.trim(),
     };
 
-    const s = getTeacherSchedule(teacherSession.id);
-    s.slots = s.slots || [];
-    const validationError = validateSlot(slot, s.slots, editingIndex);
+    const validationError = validateSlot(slot, scheduleSlots, editingId);
     if (validationError) {
       errorEl.textContent = validationError;
       errorEl.classList.remove("hidden");
@@ -514,28 +539,45 @@ function renderTeacherSchedulePage() {
       return;
     }
 
-    if (editingIndex !== null) {
-      s.slots[editingIndex] = slot;
+    if (editingId !== null && scheduleSlots[editingId]) {
+      // Update existing slot in DB
+      const existing = scheduleSlots[editingId];
+      await upsertTeacherSchedule({
+        id: existing.id || null,
+        teacher_id: teacherSession.id,
+        day: slot.day,
+        start_time: slot.startTime,
+        end_time: slot.endTime,
+        subject: slot.subject || null,
+        room: slot.room || null,
+      });
     } else {
-      s.slots.push(slot);
+      // Create new slot in DB
+      await addTeacherScheduleSlot(teacherSession.id, {
+        day: slot.day,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        subject: slot.subject || null,
+        room: slot.room || null,
+      });
     }
-    saveTeacherSchedule(teacherSession.id, s);
+
     resetForm();
-    renderSlotsList();
+    await renderSlotsList();
   });
 
   cancelEditBtn.addEventListener("click", () => {
     resetForm();
   });
 
-  renderSlotsList();
+  await renderSlotsList();
 }
 
 async function renderTeacherAudio() {
   showLoading();
   try {
     const allLogs = await loadNoiseEvents();
-    const clips = filterTeacherAudioLogs(allLogs, teacherSession);
+    const clips = await filterTeacherAudioLogs(allLogs, teacherSession);
 
     document.getElementById("page-content").innerHTML = `
       ${renderTeacherPolicyBanner()}
@@ -693,10 +735,12 @@ function stopTeacherAutoRefresh() {
   }
 }
 
-function initTeacherApp() {
+async function initTeacherApp() {
   teacherSession = requireTeacherAuth();
   if (!teacherSession) return;
-  teacherSession = syncTeacherSessionFromAccount(teacherSession);
+
+  // Sync session with latest profile data from DB
+  teacherSession = await syncTeacherSessionFromDb(teacherSession);
   sessionStorage.setItem(TEACHER_SESSION_KEY, JSON.stringify(teacherSession));
 
   document.getElementById("sidebar-user").textContent = teacherSession.name;

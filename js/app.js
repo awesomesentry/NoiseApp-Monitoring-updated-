@@ -650,11 +650,33 @@ async function renderAudio() {
   }
 }
 
-function renderSettings() {
+async function renderSettings() {
   if (!isAdmin(session)) {
     document.getElementById("page-content").innerHTML =
       `<div class="empty-state">System settings are restricted to administrators.</div>`;
     return;
+  }
+
+  // Load settings from DB
+  try {
+    const dbSettings = await fetchSystemSettings();
+    if (dbSettings) {
+      settings = {
+        thresholdGreen: dbSettings.threshold_green ?? DEFAULT_SETTINGS.thresholdGreen,
+        thresholdYellow: dbSettings.threshold_yellow ?? DEFAULT_SETTINGS.thresholdYellow,
+        thresholdRed: dbSettings.threshold_red ?? DEFAULT_SETTINGS.thresholdRed,
+        buzzerEnabled: dbSettings.buzzer_enabled ?? DEFAULT_SETTINGS.buzzerEnabled,
+        maxBeeps: dbSettings.max_beeps ?? DEFAULT_SETTINGS.maxBeeps,
+        buzzerCooldown: dbSettings.buzzer_cooldown ?? DEFAULT_SETTINGS.buzzerCooldown,
+        audioLengthMin: dbSettings.audio_length_min ?? DEFAULT_SETTINGS.audioLengthMin,
+        audioLengthMax: dbSettings.audio_length_max ?? DEFAULT_SETTINGS.audioLengthMax,
+        alertCooldown: dbSettings.alert_cooldown ?? DEFAULT_SETTINGS.alertCooldown,
+        retentionDays: dbSettings.retention_days ?? DEFAULT_SETTINGS.retentionDays,
+        teacherAccessHours: dbSettings.teacher_access_hours ?? DEFAULT_SETTINGS.teacherAccessHours,
+      };
+    }
+  } catch (_) {
+    // Use defaults if DB fetch fails
   }
 
   document.getElementById("page-content").innerHTML = `
@@ -714,11 +736,11 @@ function renderSettings() {
         </div>
       </div>
       <button type="submit" class="btn btn-primary" style="margin-top:1rem">Save configuration</button>
-      <p id="settings-saved" class="hidden" style="color:var(--green);margin-top:0.5rem">Saved locally (no settings table in Supabase yet).</p>
+      <p id="settings-saved" class="hidden" style="color:var(--green);margin-top:0.5rem">Settings saved to database.</p>
     </form>
   `;
 
-  document.getElementById("settings-form").addEventListener("submit", (e) => {
+  document.getElementById("settings-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     settings.thresholdGreen = Number(fd.get("thresholdGreen"));
@@ -730,7 +752,27 @@ function renderSettings() {
     settings.alertCooldown = Number(fd.get("alertCooldown"));
     settings.retentionDays = Number(fd.get("retentionDays"));
     settings.teacherAccessHours = Number(fd.get("teacherAccessHours"));
-    document.getElementById("settings-saved").classList.remove("hidden");
+
+    // Save to DB
+    try {
+      await saveSystemSettings({
+        threshold_green: settings.thresholdGreen,
+        threshold_yellow: settings.thresholdYellow,
+        threshold_red: settings.thresholdRed,
+        buzzer_enabled: settings.buzzerEnabled,
+        max_beeps: settings.maxBeeps,
+        buzzer_cooldown: settings.buzzerCooldown,
+        audio_length_min: settings.audioLengthMin,
+        audio_length_max: settings.audioLengthMax,
+        alert_cooldown: settings.alertCooldown,
+        retention_days: settings.retentionDays,
+        teacher_access_hours: settings.teacherAccessHours,
+      });
+      await logAdminAudit("Settings updated", "System configuration saved");
+      document.getElementById("settings-saved").classList.remove("hidden");
+    } catch (err) {
+      alert("Failed to save settings: " + err.message);
+    }
   });
 }
 
