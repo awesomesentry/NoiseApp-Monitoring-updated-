@@ -28,6 +28,15 @@ function setTeacherNav(route) {
   });
 }
 
+function formatTime12h(timeStr) {
+  if (!timeStr) return "—";
+  const [h, m] = timeStr.substring(0, 5).split(":").map(Number);
+  if (isNaN(h) || isNaN(m)) return timeStr.substring(0, 5);
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 || 12;
+  return `${hour12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
 function teacherAssignmentLabel(session) {
   const parts = [];
   if (session.assignedRooms?.length) parts.push(`Room: ${session.assignedRooms.join(", ")}`);
@@ -195,7 +204,10 @@ async function renderTeacherDashboard() {
 
     document.getElementById("page-content").innerHTML = `
       ${renderTeacherPolicyBanner()}
-      <div style="margin:0.5rem 0"><button type="button" class="btn btn-secondary" id="teacher-export-weekly-pdf">Download weekly PDF</button></div>
+      <div style="margin:0.5rem 0;display:flex;gap:0.5rem;flex-wrap:wrap">
+        <button type="button" class="btn btn-secondary" id="teacher-export-weekly-pdf">Download weekly PDF</button>
+        <button type="button" class="btn btn-secondary" id="teacher-export-csv">Export CSV</button>
+      </div>
       <div class="stats-grid">
         <div class="stat-card">
           <div class="label">RED events (48h)</div>
@@ -224,11 +236,20 @@ async function renderTeacherDashboard() {
       </div>
     `;
     bindTeacherAudioButtons(events);
-    const btn = document.getElementById('teacher-export-weekly-pdf');
-    if (btn) {
-      btn.addEventListener('click', async () => {
+    const pdfBtn = document.getElementById('teacher-export-weekly-pdf');
+    if (pdfBtn) {
+      pdfBtn.addEventListener('click', async () => {
         const all = await loadNoiseEvents();
         generateWeeklyPdf(all, { role: 'teacher', session: teacherSession, days: 7 });
+      });
+    }
+    const csvBtn = document.getElementById('teacher-export-csv');
+    if (csvBtn) {
+      csvBtn.addEventListener('click', async () => {
+        const all = await loadNoiseEvents();
+        const rawEvents = await filterTeacherEvents(all, teacherSession);
+        const events = await Promise.all(rawEvents.map((l) => decorateTeacherEventForDisplay(l, teacherSession)));
+        exportLogsToCsv(events, `teacher_noise_logs_${new Date().toISOString().slice(0, 10)}.csv`);
       });
     }
   } catch (e) {
@@ -278,6 +299,11 @@ async function renderTeacherEvents() {
 
     document.getElementById("page-content").innerHTML = `
       ${renderTeacherPolicyBanner()}
+      <div class="filter-toggle-bar">
+        <button type="button" class="btn-filter-toggle" id="teacher-filter-toggle" data-target="teacher-event-filters">
+          <span class="toggle-chevron">▼</span> Filters
+        </button>
+      </div>
       <div class="filters-bar" id="teacher-event-filters">
         <div class="form-group">
           <label>From date</label>
@@ -321,6 +347,14 @@ async function renderTeacherEvents() {
       filterFrom = filterTo = filterTimeFrom = filterTimeTo = "";
       currentPage = 1;
       renderEventsPage();
+    });
+    document.getElementById("teacher-filter-toggle").addEventListener("click", function () {
+      const targetId = this.dataset.target;
+      const filtersEl = document.getElementById(targetId);
+      if (filtersEl) {
+        filtersEl.classList.toggle("collapsed");
+        this.classList.toggle("collapsed");
+      }
     });
 
     renderEventsPage();
@@ -473,7 +507,7 @@ async function renderTeacherSchedulePage() {
         (slot, idx) => `
       <li>
         <div class="schedule-slot-info">
-          <strong>${dayToShort(slot.day)}</strong> · ${(slot.start_time || slot.startTime || "").substring(0,5)}–${(slot.end_time || slot.endTime || "").substring(0,5)}
+          <strong>${dayToShort(slot.day)}</strong> · ${formatTime12h(slot.start_time || slot.startTime || "")} – ${formatTime12h(slot.end_time || slot.endTime || "")}
           <div class="schedule-slot-meta">
             ${slot.subject || "—"} · ${slot.room || teacherSession.assignedRooms[0] || "—"}
           </div>
@@ -708,14 +742,7 @@ function shouldAutoRefreshTeacherRoute(route) {
 function initTeacherAutoRefresh() {
   if (teacherAutoRefreshInterval) clearInterval(teacherAutoRefreshInterval);
   teacherAutoRefreshInterval = setInterval(() => {
-    const pageEl = document.getElementById("page-content");
-    if (pageEl) pageEl.classList.add("refreshing");
-    loadNoiseEvents(true)
-      .then(() => teacherNavigate())
-      .catch(() => teacherNavigate())
-      .finally(() => {
-        if (pageEl) pageEl.classList.remove("refreshing");
-      });
+    loadNoiseEvents(true).catch(() => {});
   }, TEACHER_AUTO_REFRESH_INTERVAL);
 }
 

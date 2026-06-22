@@ -354,6 +354,11 @@ async function renderLogs() {
     let currentPage = LOG_FILTER_STATE.currentPage || 1;
 
     document.getElementById("page-content").innerHTML = `
+      <div class="filter-toggle-bar">
+        <button type="button" class="btn-filter-toggle" id="log-filter-toggle" data-target="log-filters">
+          <span class="toggle-chevron">▼</span> Filters
+        </button>
+      </div>
       <div class="filters-bar" id="log-filters">
         <div class="form-group">
           <label>From</label>
@@ -560,6 +565,14 @@ async function renderLogs() {
       noiseEventsCache = null;
       await renderLogs();
     });
+    document.getElementById("log-filter-toggle").addEventListener("click", function () {
+      const targetId = this.dataset.target;
+      const filtersEl = document.getElementById(targetId);
+      if (filtersEl) {
+        filtersEl.classList.toggle("collapsed");
+        this.classList.toggle("collapsed");
+      }
+    });
     document.getElementById("page-content").addEventListener("click", (e) => {
       if (e.target.classList.contains("review-clip")) {
         playAudioClip(e.target.dataset.id, logs);
@@ -601,21 +614,18 @@ async function renderAudio() {
   showLoading();
   try {
     const logs = filterLogsForUser(await loadNoiseEvents(), session);
-    const clips = getAudioClipsFromLogs(logs, "admin", null);
+    const allClips = getAudioClipsFromLogs(logs, "admin", null);
+    let currentPage = 1;
+    const AUDIO_PAGE_SIZE = 6;
 
-    document.getElementById("page-content").innerHTML = `
-      <div class="policy-banner">
-        <strong>Official policy</strong>
-        Audio from <code>noise_events</code> (audio_url). Event-triggered, short, access-controlled. No continuous recording.
-        <br><br>
-        RED only · ${clips.length} clip(s) with audio · Retention ${settings.retentionDays} days
-      </div>
-      ${
-        clips.length === 0
-          ? `<div class="empty-state">No RED events with audio_url in noise_events.</div>`
-          : `<div class="audio-grid">${clips
-              .map(
-                (c) => `
+    function renderAudioPage() {
+      const pagination = paginateItems(allClips, currentPage, AUDIO_PAGE_SIZE);
+      const pageClips = pagination.items;
+      const totalClips = pagination.total;
+
+      const clipsHtml = pageClips.length === 0
+        ? `<div class="empty-state">No RED events with audio_url in noise_events.</div>`
+        : `<div class="audio-grid">${pageClips.map((c) => `
         <div class="audio-card">
           <div class="room">${c.room}</div>
           <div class="meta">${c.time} · ${c.lengthSec}s · ${c.recordingId}</div>
@@ -627,24 +637,61 @@ async function renderAudio() {
           </div>
           <audio class="hidden-audio" data-id="${c.id}" src="${c.audioUrl}" style="display:none"></audio>
           <div class="retention-tag">Expires in ${c.expiresIn} · Retention ${c.retentionDays} days</div>
-        </div>`
-              )
-              .join("")}</div>`
-      }
-    `;
+        </div>`).join("")}</div>`;
 
-    document.querySelectorAll(".play-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const audio = document.querySelector(`audio[data-id="${btn.dataset.id}"]`);
-        if (audio) {
-          audio.style.display = "block";
-          audio.style.width = "100%";
-          audio.style.marginTop = "0.5rem";
-          audio.play();
-        }
-        console.info("[AUDIT] Admin audio", btn.dataset.id, session.username);
+      const paginationHtml = totalClips > AUDIO_PAGE_SIZE
+        ? `<div class="pagination-bar">
+            <span class="pagination-info">Showing ${pagination.startIndex}–${pagination.endIndex} of ${pagination.total}</span>
+            <div class="pagination-controls">
+              <button type="button" class="btn btn-secondary btn-sm" id="audio-prev" ${currentPage <= 1 ? "disabled" : ""}>← Prev</button>
+              <span class="page-num">Page ${pagination.page} / ${pagination.totalPages}</span>
+              <button type="button" class="btn btn-secondary btn-sm" id="audio-next" ${currentPage >= pagination.totalPages ? "disabled" : ""}>Next →</button>
+            </div>
+          </div>`
+        : "";
+
+      document.getElementById("page-content").innerHTML = `
+        <div class="policy-banner">
+          <strong>Official policy</strong>
+          Audio from <code>noise_events</code> (audio_url). Event-triggered, short, access-controlled. No continuous recording.
+          <br><br>
+          RED only · ${totalClips} clip(s) with audio · Retention ${settings.retentionDays} days
+        </div>
+        ${clipsHtml}
+        ${paginationHtml}
+      `;
+
+      document.querySelectorAll(".play-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const audio = document.querySelector(`audio[data-id="${btn.dataset.id}"]`);
+          if (audio) {
+            audio.style.display = "block";
+            audio.style.width = "100%";
+            audio.style.marginTop = "0.5rem";
+            audio.play();
+          }
+          console.info("[AUDIT] Admin audio", btn.dataset.id, session.username);
+        });
       });
-    });
+
+      document.getElementById("audio-prev")?.addEventListener("click", () => {
+        if (currentPage > 1) {
+          currentPage--;
+          renderAudioPage();
+          document.getElementById("page-content").scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
+      document.getElementById("audio-next")?.addEventListener("click", () => {
+        const totalPages = Math.ceil(totalClips / AUDIO_PAGE_SIZE);
+        if (currentPage < totalPages) {
+          currentPage++;
+          renderAudioPage();
+          document.getElementById("page-content").scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      });
+    }
+
+    renderAudioPage();
   } catch (e) {
     showError(e.message);
   }
@@ -789,6 +836,7 @@ async function renderReports() {
     document.getElementById("page-content").innerHTML = `
       <div class="export-bar">
         <button type="button" class="btn btn-secondary" id="export-weekly-pdf">Export weekly PDF</button>
+        <button type="button" class="btn btn-secondary" id="export-csv">Export CSV</button>
       </div>
       <div class="charts-row">
         <div class="panel">
@@ -861,6 +909,11 @@ async function renderReports() {
     document.getElementById("export-weekly-pdf").addEventListener("click", async () => {
       const all = await loadNoiseEvents();
       generateWeeklyPdf(all, { role: isAdmin(session) ? 'admin' : 'teacher', session, days: 7 });
+    });
+    document.getElementById("export-csv").addEventListener("click", async () => {
+      const all = await loadNoiseEvents();
+      const filtered = filterLogsForUser(all, session);
+      exportLogsToCsv(filtered, `noise_logs_${new Date().toISOString().slice(0, 10)}.csv`);
     });
   } catch (e) {
     showError(e.message);
@@ -980,21 +1033,7 @@ function initMobileNav() {
 function initAutoRefresh() {
   if (autoRefreshInterval) clearInterval(autoRefreshInterval);
   autoRefreshInterval = setInterval(() => {
-    const route = getRoute();
-    if (route === "dashboard") {
-      loadNoiseEvents(true)
-        .then(() => refreshDashboard())
-        .catch(() => {});
-      return;
-    }
-    const pageEl = document.getElementById("page-content");
-    if (pageEl) pageEl.classList.add("refreshing");
-    loadNoiseEvents(true)
-      .then(() => navigate())
-      .catch(() => navigate())
-      .finally(() => {
-        if (pageEl) pageEl.classList.remove("refreshing");
-      });
+    loadNoiseEvents(true).catch(() => {});
   }, AUTO_REFRESH_INTERVAL);
 }
 

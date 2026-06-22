@@ -26,7 +26,7 @@ function mapNoiseEvent(row) {
   return {
     id: row.id,
     date: d.toISOString().slice(0, 10),
-    time: d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+    time: d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }),
     datetime: dt,
     room: row.room || row.device_id || "—",
     deviceId: row.device_id,
@@ -319,6 +319,44 @@ function bindPagination(prefix, currentPage, totalPages, onPageChange) {
   document.getElementById(`${prefix}-next`)?.addEventListener("click", () => {
     if (currentPage < totalPages) onPageChange(currentPage + 1);
   });
+}
+
+// --- CSV export helper ---
+function exportLogsToCsv(logs, filename) {
+  const headers = ["Date", "Time", "Room/Device", "Noise (dB)", "Status", "Level", "Buzzer", "Audio", "Duration (s)", "Subject", "Teacher"];
+  const rows = logs.map((l) => [
+    l.date || "",
+    l.time || "",
+    l.room || "",
+    l.db || "",
+    l.status || "",
+    l.warningLevel || "",
+    l.buzzer ? "Yes" : "No",
+    l.audioRecorded ? "Yes" : "No",
+    l.durationSec || "",
+    l.subject || "",
+    l.teacher || "",
+  ]);
+
+  const escape = (val) => {
+    const str = String(val);
+    if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  const bom = "\uFEFF";
+  const csv = bom + [headers.join(","), ...rows.map((r) => r.map(escape).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || `noise_logs_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // --- PDF export helpers (weekly report) ---
