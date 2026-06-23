@@ -109,7 +109,12 @@ function getDashboardStats(logs, role, assignedRoom) {
       peakHour = parseInt(h, 10);
     }
   });
-  const peakLabel = `${peakHour}:00–${peakHour + 1}:00`;
+  const formatHour = (h) => {
+    const period = h >= 12 ? "PM" : "AM";
+    const hour12 = h % 12 || 12;
+    return `${hour12}:00 ${period}`;
+  };
+  const peakLabel = `${formatHour(peakHour)}–${formatHour(peakHour + 1)}`;
 
   return {
     incidentsToday: todayLogs.filter((l) => l.status !== "green").length,
@@ -416,8 +421,48 @@ function getTeacherWeeklyEvents(logs, days = 7) {
   return { dates, teachers };
 }
 
+function getMonthlyMondayToSaturdayRange() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+
+  const firstDay = new Date(Date.UTC(year, month, 1));
+  const lastDay = new Date(Date.UTC(year, month + 1, 0));
+
+  const start = new Date(firstDay);
+  const dayOfWeek = start.getUTCDay();
+  const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  start.setUTCDate(start.getUTCDate() - daysToMonday);
+  start.setUTCHours(0, 0, 0, 0);
+
+  const end = new Date(lastDay);
+  const lastDayOfWeek = end.getUTCDay();
+  const daysToSaturday = lastDayOfWeek === 6 ? 0 : 6 - lastDayOfWeek;
+  end.setUTCDate(end.getUTCDate() + daysToSaturday);
+  end.setUTCHours(23, 59, 59, 999);
+
+  return { start, end };
+}
+
+function getMonthlyDateStrings() {
+  const { start, end } = getMonthlyMondayToSaturdayRange();
+  const dates = [];
+  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
+function filterLogsToMonthlyRange(logs) {
+  const { start, end } = getMonthlyMondayToSaturdayRange();
+  return logs.filter((l) => {
+    const d = new Date(l.datetime);
+    return d >= start && d <= end;
+  });
+}
+
 async function generateWeeklyPdf(logs, options = {}) {
-  const { role = 'admin', session = null, days = 7 } = options;
+  const { role = 'admin', session = null, days = 7, monthly = false } = options;
   try {
     await _ensurePdfLibraries();
   } catch (e) {
@@ -474,7 +519,30 @@ async function generateWeeklyPdf(logs, options = {}) {
       ? logs.filter((l) => (session.deviceIds?.includes(l.deviceId) || session.name === l.teacher || session.username === l.teacher))
       : logs;
 
-  const { dates } = getTeacherWeeklyEvents(filteredLogs, days);
+  let dates;
+  let periodLabel;
+  let reportTitle;
+  let filename;
+
+  if (monthly) {
+    dates = getMonthlyDateStrings();
+    const { start } = getMonthlyMondayToSaturdayRange();
+    const monthName = start.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    reportTitle = role === 'teacher'
+      ? `Monthly noise incidents — ${session?.name || session?.username || 'Teacher'}`
+      : 'Monthly noise incidents — All teachers';
+    periodLabel = `Month: ${monthName} (Monday — Saturday)`;
+    filename = `monthly_report_${start.toISOString().slice(0, 7)}.pdf`;
+  } else {
+    const result = getTeacherWeeklyEvents(filteredLogs, days);
+    dates = result.dates;
+    reportTitle = role === 'teacher'
+      ? `Weekly noise incidents — ${session?.name || session?.username || 'Teacher'}`
+      : 'Weekly noise incidents — All teachers';
+    periodLabel = `Week: ${dates[0]} — ${dates[dates.length - 1]}`;
+    filename = `weekly_report_${new Date().toISOString().slice(0,10)}.pdf`;
+  }
+
   const weeklyCounts = dates.map((date) =>
     filteredLogs.filter((l) => l.date === date && isIncident(l)).length
   );
@@ -498,22 +566,17 @@ async function generateWeeklyPdf(logs, options = {}) {
     .map(([name, { count }]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
 
-  const reportTitle =
-    role === 'teacher'
-      ? `Weekly noise incidents — ${session.name || session.username || 'Teacher'}`
-      : 'Weekly noise incidents — All teachers';
-
   doc.setFontSize(16);
   doc.text(reportTitle, margin, 18);
   doc.setFontSize(10);
   doc.text(`Generated: ${new Date().toLocaleString()}`, margin, 24);
   doc.setFontSize(11);
-  doc.text(`Week: ${dates[0]} — ${dates[dates.length - 1]}`, margin, 30);
+  doc.text(periodLabel, margin, 30);
 
   const firstChartY = 38;
   const secondChartY = 110;
 
-  const weeklyChartImg = await renderChartImage(dates, weeklyCounts, 'Incidents per day (last 7 days)');
+  const weeklyChartImg = await renderChartImage(dates, weeklyCounts, monthly ? 'Incidents per day' : 'Incidents per day (last 7 days)');
   if (weeklyChartImg) {
     const imgWidthMm = pageWidth - margin * 2;
     const imgHeightMm = 60;
@@ -536,8 +599,8 @@ async function generateWeeklyPdf(logs, options = {}) {
     }
   } else {
     doc.setFontSize(10);
-    doc.text('No subject comparison data available for this week.', margin, secondChartY + 10);
+    doc.text('No subject comparison data available for this period.', margin, secondChartY + 10);
   }
 
-  doc.save(`weekly_report_${new Date().toISOString().slice(0,10)}.pdf`);
+  doc.save(filename);
 }

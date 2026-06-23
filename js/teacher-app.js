@@ -17,6 +17,12 @@ const TEACHER_ROUTES = {
   policy: { title: "Access Policy", keyword: "Controlled teacher access model" },
 };
 
+let teacherSettings = { ...DEFAULT_SETTINGS };
+
+function getTeacherAccessHours() {
+  return teacherSettings.teacherAccessHours || 48;
+}
+
 function getTeacherRoute() {
   const hash = (location.hash || "#dashboard").slice(1);
   return TEACHER_ROUTES[hash] ? hash : "dashboard";
@@ -150,15 +156,17 @@ async function decorateTeacherEventForDisplay(log, session) {
 }
 
 function renderTeacherPolicyBanner() {
+  const accessHours = getTeacherAccessHours();
   return `
     <div class="policy-banner teacher-access-banner">
       <strong>Time-limited access</strong>
-      You can only view RED-level events and audio from the last <strong>${TEACHER_ACCESS_HOURS} hours</strong>.
+      You can only view RED-level events and audio from the last <strong>${accessHours} hours</strong>.
       Older recordings are archived and not available to teachers.
     </div>`;
 }
 
 function renderAccessPolicyPage() {
+  const accessHours = getTeacherAccessHours();
   document.getElementById("page-content").innerHTML = `
     <div class="policy-banner">
       <strong>Official access policy</strong>
@@ -187,7 +195,7 @@ function renderAccessPolicyPage() {
       <h3>Your current access</h3>
       <div class="setting-row"><span>Classroom</span><span>${teacherSession.assignedRooms.join(", ") || "—"}</span></div>
       <div class="setting-row"><span>Device</span><span>${teacherSession.deviceIds.join(", ") || "—"}</span></div>
-      <div class="setting-row"><span>Access window</span><span>${TEACHER_ACCESS_HOURS} hours from event time</span></div>
+      <div class="setting-row"><span>Access window</span><span>${accessHours} hours from event time</span></div>
       <div class="setting-row"><span>Audio mode</span><span>Read-only streaming (no download)</span></div>
     </div>
   `;
@@ -201,16 +209,17 @@ async function renderTeacherDashboard() {
     const events = await Promise.all(rawEvents.map((l) => decorateTeacherEventForDisplay(l, teacherSession)));
     const rawWithAudio = await filterTeacherAudioLogs(allLogs, teacherSession);
     const withAudio = await Promise.all(rawWithAudio.map((l) => decorateTeacherEventForDisplay(l, teacherSession)));
+    const accessHours = getTeacherAccessHours();
 
     document.getElementById("page-content").innerHTML = `
       ${renderTeacherPolicyBanner()}
       <div style="margin:0.5rem 0;display:flex;gap:0.5rem;flex-wrap:wrap">
-        <button type="button" class="btn btn-secondary" id="teacher-export-weekly-pdf">Download weekly PDF</button>
-        <button type="button" class="btn btn-secondary" id="teacher-export-csv">Export CSV</button>
+        <button type="button" class="btn btn-secondary" id="teacher-export-monthly-pdf">Download monthly PDF</button>
+        <button type="button" class="btn btn-secondary" id="teacher-export-csv">Export monthly CSV</button>
       </div>
       <div class="stats-grid">
         <div class="stat-card">
-          <div class="label">RED events (48h)</div>
+          <div class="label">RED events (${accessHours}h)</div>
           <div class="value red">${events.length}</div>
         </div>
         <div class="stat-card">
@@ -223,24 +232,24 @@ async function renderTeacherDashboard() {
         </div>
         <div class="stat-card">
           <div class="label">Access window</div>
-          <div class="value green" style="font-size:1.1rem">${TEACHER_ACCESS_HOURS}h</div>
+          <div class="value green" style="font-size:1.1rem">${accessHours}h</div>
         </div>
       </div>
       <div class="panel">
         <h3>Recent RED events</h3>
         ${
           events.length === 0
-            ? `<div class="empty-state">No RED-level events in the last ${TEACHER_ACCESS_HOURS} hours for your classroom.</div>`
+            ? `<div class="empty-state">No RED-level events in the last ${accessHours} hours for your classroom.</div>`
             : `<div class="event-list">${events.slice(0, 5).map((l) => renderEventCard(l, { showAccessExpiry: false })).join("")}</div>`
         }
       </div>
     `;
     bindTeacherAudioButtons(events);
-    const pdfBtn = document.getElementById('teacher-export-weekly-pdf');
+    const pdfBtn = document.getElementById('teacher-export-monthly-pdf');
     if (pdfBtn) {
       pdfBtn.addEventListener('click', async () => {
         const all = await loadNoiseEvents();
-        generateWeeklyPdf(all, { role: 'teacher', session: teacherSession, days: 7 });
+        generateWeeklyPdf(all, { role: 'teacher', session: teacherSession, monthly: true });
       });
     }
     const csvBtn = document.getElementById('teacher-export-csv');
@@ -249,7 +258,9 @@ async function renderTeacherDashboard() {
         const all = await loadNoiseEvents();
         const rawEvents = await filterTeacherEvents(all, teacherSession);
         const events = await Promise.all(rawEvents.map((l) => decorateTeacherEventForDisplay(l, teacherSession)));
-        exportLogsToCsv(events, `teacher_noise_logs_${new Date().toISOString().slice(0, 10)}.csv`);
+        const monthlyLogs = filterLogsToMonthlyRange(events);
+        const monthKey = new Date().toISOString().slice(0, 7);
+        exportLogsToCsv(monthlyLogs, `teacher_noise_logs_${monthKey}.csv`);
       });
     }
   } catch (e) {
@@ -268,6 +279,7 @@ async function renderTeacherEvents() {
     let filterTo = teacherEventState.filterTo;
     let filterTimeFrom = teacherEventState.filterTimeFrom;
     let filterTimeTo = teacherEventState.filterTimeTo;
+    const accessHours = getTeacherAccessHours();
 
     function renderEventsPage() {
       teacherEventState.currentPage = currentPage;
@@ -282,7 +294,7 @@ async function renderTeacherEvents() {
 
       document.getElementById("teacher-events-list").innerHTML =
         filtered.length === 0
-          ? `<div class="empty-state">No RED events match your filters within the ${TEACHER_ACCESS_HOURS}-hour access window.</div>`
+          ? `<div class="empty-state">No RED events match your filters within the ${accessHours}-hour access window.</div>`
           : `<div class="event-list">${filtered.map((l) => renderEventCard(l, { showAccessExpiry: true })).join("")}</div>`;
 
       const pagEl = document.getElementById("teacher-events-pagination");
@@ -325,7 +337,7 @@ async function renderTeacherEvents() {
       </div>
       <div class="panel">
         <p style="font-size:0.75rem;color:var(--muted);margin:0 0 0.75rem">
-          Showing <strong>RED-level only</strong> · ${teacherAssignmentLabel(teacherSession)} · Last ${TEACHER_ACCESS_HOURS} hours
+          Showing <strong>RED-level only</strong> · ${teacherAssignmentLabel(teacherSession)} · Last ${accessHours} hours
         </p>
         <div id="teacher-events-list"></div>
         <div id="teacher-events-pagination"></div>
@@ -361,6 +373,45 @@ async function renderTeacherEvents() {
   } catch (e) {
     showError(e.message);
   }
+}
+
+// ─── Confirm modal helper ───
+function showConfirmModal({ title, message, confirmText = "Confirm", cancelText = "Cancel", danger = false }) {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.className = "audio-modal-backdrop confirm-modal-backdrop";
+    backdrop.innerHTML = `
+      <div class="panel audio-modal-panel confirm-modal-panel">
+        <h3 style="margin-top:0">${title}</h3>
+        <p style="font-size:0.9rem;color:var(--muted);margin:1rem 0">${message}</p>
+        <div style="display:flex;gap:0.75rem;justify-content:flex-end">
+          <button type="button" class="btn btn-secondary btn-sm" id="confirm-modal-cancel" style="width:auto !important">${cancelText}</button>
+          <button type="button" class="btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}" id="confirm-modal-ok" style="width:auto !important">${confirmText}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+
+    function cleanup() {
+      backdrop.remove();
+    }
+
+    backdrop.querySelector("#confirm-modal-cancel").addEventListener("click", () => {
+      cleanup();
+      resolve(false);
+    });
+
+    backdrop.querySelector("#confirm-modal-ok").addEventListener("click", () => {
+      cleanup();
+      resolve(true);
+    });
+
+    backdrop.addEventListener("click", (ev) => {
+      if (ev.target === backdrop) {
+        cleanup();
+        resolve(false);
+      }
+    });
+  });
 }
 
 async function renderTeacherSchedulePage() {
@@ -409,10 +460,11 @@ async function renderTeacherSchedulePage() {
           <label for="slot-room">Room</label>
           <input type="text" id="slot-room" value="" />
         </div>
-        <button type="button" class="btn btn-primary btn-sm" id="add-slot-btn" style="height:fit-content">Add slot</button>
-        <button type="button" class="btn btn-secondary btn-sm hidden" id="cancel-edit-btn" style="height:fit-content">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" id="add-slot-btn">Add slot</button>
+        <button type="button" class="btn btn-secondary btn-sm hidden" id="cancel-edit-btn">Cancel</button>
       </div>
       <p class="error-msg hidden" id="schedule-error"></p>
+      <p class="success-msg hidden" id="schedule-success"></p>
     </div>
     <div class="panel">
       <h3>Your weekly schedule</h3>
@@ -488,6 +540,16 @@ async function renderTeacherSchedulePage() {
     errorEl.textContent = "";
   }
 
+  function showSuccessMessage(msg) {
+    const successEl = document.getElementById("schedule-success");
+    if (!successEl) return;
+    successEl.textContent = msg;
+    successEl.classList.remove("hidden");
+    setTimeout(() => {
+      successEl.classList.add("hidden");
+    }, 3000);
+  }
+
   async function renderSlotsList() {
     // Refresh from DB
     scheduleSlots = await fetchTeacherSchedules(teacherSession.id);
@@ -538,16 +600,41 @@ async function renderTeacherSchedulePage() {
       });
     });
 
+    function getSlotDisplayText(slot) {
+      const dayLabel = dayToShort(slot.day);
+      const start = formatTime12h(slot.start_time || slot.startTime || "");
+      const end = formatTime12h(slot.end_time || slot.endTime || "");
+      const subject = slot.subject || "—";
+      const room = slot.room || teacherSession.assignedRooms[0] || "—";
+      return `${dayLabel} · ${start} – ${end} · ${subject} · ${room}`;
+    }
+
     list.querySelectorAll(".remove-slot").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const idx = parseInt(btn.dataset.idx, 10);
         const slot = scheduleSlots[idx];
+        if (!slot) return;
+
+        const slotDisplay = getSlotDisplayText(slot);
+
+        // Show confirmation before removing
+        const confirmed = await showConfirmModal({
+          title: "Remove schedule slot?",
+          message: `Are you sure you want to remove this schedule slot?<br><br><strong>${slotDisplay}</strong>`,
+          confirmText: "Remove",
+          cancelText: "Cancel",
+          danger: true,
+        });
+
+        if (!confirmed) return;
+
         if (slot && slot.id) {
           await removeTeacherScheduleSlot(slot.id);
         }
         scheduleSlots.splice(idx, 1);
         resetForm();
         await renderSlotsList();
+        showSuccessMessage("Schedule slot has been removed successfully.");
       });
     });
   }
@@ -573,7 +660,18 @@ async function renderTeacherSchedulePage() {
       return;
     }
 
+    const slotDisplay = `${dayToShort(slot.day)} · ${formatTime12h(slot.startTime)} – ${formatTime12h(slot.endTime)} · ${slot.subject || "—"} · ${slot.room || teacherSession.assignedRooms[0] || "—"}`;
+
     if (editingId !== null && scheduleSlots[editingId]) {
+      // Confirm update
+      const confirmed = await showConfirmModal({
+        title: "Save changes to slot?",
+        message: `Are you sure you want to update this schedule slot?<br><br><strong>${slotDisplay}</strong>`,
+        confirmText: "Save",
+        cancelText: "Cancel",
+      });
+      if (!confirmed) return;
+
       // Update existing slot in DB
       const existing = scheduleSlots[editingId];
       await upsertTeacherSchedule({
@@ -586,6 +684,15 @@ async function renderTeacherSchedulePage() {
         room: slot.room || null,
       });
     } else {
+      // Confirm create
+      const confirmed = await showConfirmModal({
+        title: "Add new schedule slot?",
+        message: `Are you sure you want to add this schedule slot?<br><br><strong>${slotDisplay}</strong>`,
+        confirmText: "Add",
+        cancelText: "Cancel",
+      });
+      if (!confirmed) return;
+
       // Create new slot in DB
       await addTeacherScheduleSlot(teacherSession.id, {
         day: slot.day,
@@ -612,6 +719,7 @@ async function renderTeacherAudio() {
   try {
     const allLogs = await loadNoiseEvents();
     const clips = await filterTeacherAudioLogs(allLogs, teacherSession);
+    const accessHours = getTeacherAccessHours();
 
     document.getElementById("page-content").innerHTML = `
       ${renderTeacherPolicyBanner()}
@@ -621,7 +729,7 @@ async function renderTeacherAudio() {
       </div>
       ${
         clips.length === 0
-          ? `<div class="empty-state">No audio clips available within the ${TEACHER_ACCESS_HOURS}-hour access window.</div>`
+          ? `<div class="empty-state">No audio clips available within the ${accessHours}-hour access window.</div>`
           : `<div class="audio-grid">${clips.map((l) => `
         <div class="audio-card">
           <div class="room">${l.room}</div>
@@ -722,19 +830,6 @@ function initTeacherMobileNav() {
   window.addEventListener("resize", () => { if (window.innerWidth > 768) setOpen(false); });
 }
 
-function initTeacherSessionTimer() {
-  function tick() {
-    const ms = getTeacherRemainingSessionMs(teacherSession);
-    const m = Math.floor(ms / 60000);
-    const s = Math.floor((ms % 60000) / 1000);
-    document.getElementById("session-timer").textContent =
-      `Session: ${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-    if (ms <= 0) teacherLogout();
-  }
-  tick();
-  setInterval(tick, 1000);
-}
-
 function shouldAutoRefreshTeacherRoute(route) {
   return ["dashboard", "events", "audio"].includes(route);
 }
@@ -770,6 +865,19 @@ async function initTeacherApp() {
   teacherSession = await syncTeacherSessionFromDb(teacherSession);
   sessionStorage.setItem(TEACHER_SESSION_KEY, JSON.stringify(teacherSession));
 
+  // Load teacher settings from DB
+  try {
+    const dbSettings = await fetchSystemSettings();
+    if (dbSettings) {
+      teacherSettings = {
+        ...DEFAULT_SETTINGS,
+        teacherAccessHours: dbSettings.teacher_access_hours ?? DEFAULT_SETTINGS.teacherAccessHours,
+      };
+    }
+  } catch (_) {
+    // Use defaults if DB fetch fails
+  }
+
   document.getElementById("sidebar-user").textContent = teacherSession.name;
   document.getElementById("sidebar-rooms").textContent = teacherAssignmentLabel(teacherSession);
 
@@ -782,7 +890,6 @@ async function initTeacherApp() {
   document.addEventListener("click", touchTeacherSession);
 
   teacherNavigate();
-  initTeacherSessionTimer();
   updateTeacherAutoRefresh();
 }
 

@@ -584,7 +584,7 @@ async function renderLogs() {
   }
 }
 
-function playAudioClip(logId, logs) {
+async function playAudioClip(logId, logs) {
   const log = logs.find((l) => l.id === logId);
   if (!log || !log.audioUrl) return;
 
@@ -601,7 +601,7 @@ function playAudioClip(logId, logs) {
   document.body.appendChild(modal);
   modal.querySelector("#close-audio").onclick = () => modal.remove();
   modal.onclick = (ev) => { if (ev.target === modal) modal.remove(); };
-  console.info("[AUDIT] Audio play", session.username, logId, new Date().toISOString());
+  await logAdminAudit("Audio playback", `Played clip ${logId} from ${log.room} (${log.db} dB)`);
 }
 
 async function renderAudio() {
@@ -835,8 +835,8 @@ async function renderReports() {
 
     document.getElementById("page-content").innerHTML = `
       <div class="export-bar">
-        <button type="button" class="btn btn-secondary" id="export-weekly-pdf">Export weekly PDF</button>
-        <button type="button" class="btn btn-secondary" id="export-csv">Export CSV</button>
+        <button type="button" class="btn btn-secondary" id="export-monthly-pdf">Export monthly PDF</button>
+        <button type="button" class="btn btn-secondary" id="export-csv">Export monthly CSV</button>
       </div>
       <div class="charts-row">
         <div class="panel">
@@ -854,7 +854,7 @@ async function renderReports() {
           <div class="heatmap-row-labels">${heatmap.dayLabels.map((d) => `<span>${d}</span>`).join("")}</div>
           <div class="heatmap-wrap">
             <div class="heatmap" id="heatmap"></div>
-            <div class="heatmap-labels"><span>7 AM</span><span>10 AM</span><span>1 PM</span><span>2 PM</span></div>
+        <div class="heatmap-labels"><span>7 AM</span><span>10 AM</span><span>1 PM</span><span>2 PM</span></div>
           </div>
         </div>
       </div>
@@ -906,21 +906,22 @@ async function renderReports() {
       hm.appendChild(el);
     });
 
-    document.getElementById("export-weekly-pdf").addEventListener("click", async () => {
+    document.getElementById("export-monthly-pdf").addEventListener("click", async () => {
       const all = await loadNoiseEvents();
-      generateWeeklyPdf(all, { role: isAdmin(session) ? 'admin' : 'teacher', session, days: 7 });
+      generateWeeklyPdf(all, { role: isAdmin(session) ? 'admin' : 'teacher', session, monthly: true });
     });
     document.getElementById("export-csv").addEventListener("click", async () => {
       const all = await loadNoiseEvents();
       const filtered = filterLogsForUser(all, session);
-      exportLogsToCsv(filtered, `noise_logs_${new Date().toISOString().slice(0, 10)}.csv`);
+      const monthlyLogs = filterLogsToMonthlyRange(filtered);
+      const monthKey = new Date().toISOString().slice(0, 7);
+      exportLogsToCsv(monthlyLogs, `noise_logs_${monthKey}.csv`);
     });
   } catch (e) {
     showError(e.message);
   }
 }
 
-// CSV export removed — weekly PDF reports are used instead.
 
 async function renderAudit() {
   if (!isAdmin(session)) {
@@ -985,19 +986,6 @@ async function navigate() {
   setActiveNav(route);
   await RENDERERS[route]();
   resizeChartsSoon();
-}
-
-function initSessionTimer() {
-  function tick() {
-    const ms = getRemainingSessionMs(session);
-    const m = Math.floor(ms / 60000);
-    const s = Math.floor((ms % 60000) / 1000);
-    document.getElementById("session-timer").textContent =
-      `Session: ${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-    if (ms <= 0) logout();
-  }
-  tick();
-  setInterval(tick, 1000);
 }
 
 function initMobileNav() {
@@ -1077,7 +1065,6 @@ function init() {
   document.addEventListener("click", touchSession);
 
   navigate();
-  initSessionTimer();
   updateAutoRefresh();
 
   let resizeTimer;

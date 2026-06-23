@@ -152,7 +152,17 @@ a {
 
 .btn-secondary:hover { background: var(--border); }
 
+.btn-danger {
+  background: var(--red);
+  color: white;
+  border: none;
+}
+
+.btn-danger:hover { background: #dc2626; }
+
 .btn-sm { padding: 0.4rem 0.75rem; font-size: 0.8rem; }
+
+.confirm-modal-panel .btn-sm { min-width: 80px; }
 
 .login-hint {
   margin-top: 1.25rem;
@@ -1313,6 +1323,15 @@ a {
   font-size: 0.6rem;
 }
 
+/* Confirm modal */
+.confirm-modal-panel {
+  max-width: 440px;
+}
+
+.confirm-modal-panel p strong {
+  color: var(--accent);
+}
+
 /* Schedule editor */
 .schedule-form-grid {
   display: grid;
@@ -1320,6 +1339,12 @@ a {
   gap: 0.75rem;
   margin-bottom: 1rem;
   align-items: end;
+}
+
+.schedule-form-grid .btn-sm {
+  width: auto;
+  min-width: 120px;
+  margin-top: 0;
 }
 
 .schedule-list {

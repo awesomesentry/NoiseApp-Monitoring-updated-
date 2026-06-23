@@ -1,6 +1,6 @@
 // ─── Teacher Auth using Supabase Auth (GoTrue) + profiles/teacher_classrooms/teacher_schedules ───
 const TEACHER_SESSION_KEY = "noise_monitor_teacher_session";
-const TEACHER_ACCESS_HOURS = 48;
+// teacherAccessHours is loaded dynamically from system_settings
 const TEACHER_SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
 // ─── Login ───
@@ -57,7 +57,7 @@ async function loginTeacher(email, password) {
 }
 
 // ─── Sign up (creates auth user + profile) ───
-async function signupTeacher({ name, email, password, room }) {
+async function signupTeacher({ name, email, password }) {
   try {
     const normalizedEmail = email.trim().toLowerCase();
     if (password.length < 6) {
@@ -77,27 +77,6 @@ async function signupTeacher({ name, email, password, room }) {
       full_name: name.trim(),
       mobile: null,
     });
-
-    // If a classroom name was provided, find or create it and link
-    if (room && room.trim()) {
-      try {
-        // Find classroom by name
-        const classrooms = await fetchClassrooms();
-        let classroom = classrooms.find(
-          c => c.name.toLowerCase() === room.trim().toLowerCase()
-        );
-        if (!classroom) {
-          // Create new classroom
-          const newClassroom = await supabasePost(TABLES.classrooms, { name: room.trim() });
-          classroom = Array.isArray(newClassroom) ? newClassroom[0] : newClassroom;
-        }
-        if (classroom && classroom.id) {
-          await setTeacherClassrooms(user.id, [classroom.id]);
-        }
-      } catch (e) {
-        console.warn("Failed to link classroom:", e);
-      }
-    }
 
     return { ok: true };
   } catch (e) {
@@ -267,7 +246,8 @@ function getTeacherRemainingSessionMs(session) {
 
 function isWithinTeacherAccessWindow(datetime) {
   const eventTime = new Date(datetime).getTime();
-  const cutoff = Date.now() - TEACHER_ACCESS_HOURS * 60 * 60 * 1000;
+  const hours = (typeof teacherSettings !== 'undefined' ? teacherSettings.teacherAccessHours : 48);
+  const cutoff = Date.now() - hours * 60 * 60 * 1000;
   return eventTime >= cutoff;
 }
 
@@ -386,10 +366,11 @@ async function filterTeacherAudioLogs(logs, session) {
 }
 
 function formatAccessWindowRemaining(datetime) {
-  const expires = new Date(datetime).getTime() + TEACHER_ACCESS_HOURS * 60 * 60 * 1000;
+  const hours = (typeof teacherSettings !== 'undefined' ? teacherSettings.teacherAccessHours : 48);
+  const expires = new Date(datetime).getTime() + hours * 60 * 60 * 1000;
   const msLeft = expires - Date.now();
   if (msLeft <= 0) return "Expired";
-  const hours = Math.floor(msLeft / (60 * 60 * 1000));
-  if (hours >= 24) return `${Math.floor(hours / 24)}d ${hours % 24}h left`;
-  return `${hours}h left`;
+  const hoursLeft = Math.floor(msLeft / (60 * 60 * 1000));
+  if (hoursLeft >= 24) return `${Math.floor(hoursLeft / 24)}d ${hoursLeft % 24}h left`;
+  return `${hoursLeft}h left`;
 }
