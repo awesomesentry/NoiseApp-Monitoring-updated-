@@ -195,20 +195,37 @@ async function fetchTeacherClassrooms(teacherId) {
 }
 
 async function setTeacherClassrooms(teacherId, classroomIds) {
-  // Delete existing, then insert new ones
-  await supabaseDelete(TABLES.teacherClassrooms, `teacher_id=eq.${teacherId}`);
-  if (classroomIds.length === 0) return [];
-  const inserts = classroomIds.map(cid => ({
-    teacher_id: teacherId,
-    classroom_id: cid,
-  }));
+  // Only add/remove what changed
+  const existing = await supabaseGet(
+    TABLES.teacherClassrooms,
+    `teacher_id=eq.${teacherId}&select=id,classroom_id`
+  ).catch(() => []);
+  const existingIds = existing.map(r => r.classroom_id);
+
+  // Remove associations no longer in the new list
+  for (const row of existing) {
+    if (!classroomIds.includes(row.classroom_id)) {
+      try {
+        await supabaseDelete(TABLES.teacherClassrooms, `id=eq.${row.id}`);
+      } catch (e) {
+        console.warn("Failed to remove classroom link:", e);
+      }
+    }
+  }
+
+  // Add new associations not already present
   const results = [];
-  for (const ins of inserts) {
-    try {
-      const r = await supabasePost(TABLES.teacherClassrooms, ins);
-      results.push(r);
-    } catch (e) {
-      console.warn("Failed to link classroom:", e);
+  for (const cid of classroomIds) {
+    if (!existingIds.includes(cid)) {
+      try {
+        const r = await supabasePost(TABLES.teacherClassrooms, {
+          teacher_id: teacherId,
+          classroom_id: cid,
+        });
+        results.push(r);
+      } catch (e) {
+        console.warn("Failed to link classroom:", e);
+      }
     }
   }
   return results;
@@ -220,6 +237,60 @@ async function fetchTeacherSchedules(teacherId) {
     TABLES.teacherSchedules,
     `teacher_id=eq.${teacherId}&order=day.asc,start_time.asc`
   );
+}
+
+async function fetchAllTeacherSchedules() {
+  return supabaseGet(
+    TABLES.teacherSchedules,
+    "select=*&order=day.asc,start_time.asc"
+  );
+}
+
+async function checkScheduleConflictWithOtherTeachers(teacherId, day, startTime, endTime, excludeId = null) {
+  const allSchedules = await fetchAllTeacherSchedules();
+  if (!allSchedules || !allSchedules.length) return null;
+
+  const newStart = timeToMinutes(startTime);
+  const newEnd = timeToMinutes(endTime);
+
+  for (const slot of allSchedules) {
+    // Skip the current teacher's slots and excluded slot (for edits)
+    if (slot.teacher_id === teacherId) continue;
+    if (excludeId && slot.id === excludeId) continue;
+
+    // Only check same day
+    if (slot.day !== day) continue;
+
+    const existingStart = timeToMinutes(slot.start_time || slot.startTime);
+    const existingEnd = timeToMinutes(slot.end_time || slot.endTime);
+
+    // Check for time overlap: two intervals overlap if start1 < end2 AND start2 < end1
+    if (newStart < existingEnd && existingStart < newEnd) {
+      // Get teacher name for the conflict
+      const teacherProfile = await getProfileById(slot.teacher_id);
+      const teacherName = teacherProfile?.full_name || teacherProfile?.username || `Teacher (ID: ${slot.teacher_id})`;
+      const subject = slot.subject || "—";
+      const existingStartFormatted = formatTime12h(slot.start_time || slot.startTime);
+      const existingEndFormatted = formatTime12h(slot.end_time || slot.endTime);
+      
+      return {
+        conflict: true,
+        teacherName,
+        subject,
+        day,
+        startTime: existingStartFormatted,
+        endTime: existingEndFormatted,
+      };
+    }
+  }
+
+  return { conflict: false };
+}
+
+function timeToMinutes(timeStr) {
+  if (!timeStr) return 0;
+  const [h, m] = timeStr.split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
 }
 
 async function upsertTeacherSchedule(schedule) {
@@ -257,17 +328,31 @@ async function fetchSystemSettings() {
 }
 
 async function saveSystemSettings(settings) {
-  const existing = await fetchSystemSettings();
   const body = {
     ...settings,
     updated_at: new Date().toISOString(),
   };
-  if (existing && existing.id) {
-    await supabasePatch(TABLES.systemSettings, `id=eq.${existing.id}`, body);
-  } else {
-    body.created_at = new Date().toISOString();
-    await supabasePost(TABLES.systemSettings, body);
+  await supabasePatch(TABLES.systemSettings, `id=eq.1`, body);
+}
+
+// ─── Supabase RPC (call database functions) ───
+async function supabaseRpc(functionName, params = {}) {
+  const h = supabaseHeaders();
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${functionName}`, {
+    method: "POST",
+    headers: h,
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`rpc/${functionName}: ${res.status} ${text}`);
   }
+  return res.json();
+}
+
+// ─── Cleanup expired recordings (callable from external cron) ───
+async function cleanupExpiredNoiseEvents() {
+  return supabaseRpc("delete_expired_noise_events");
 }
 
 // ─── Existing API functions (unchanged) ───

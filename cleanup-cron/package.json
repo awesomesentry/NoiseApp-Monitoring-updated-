@@ -1,0 +1,14 @@
+{
+  "name": "noiseapp-cleanup-cron",
+  "version": "1.0.0",
+  "description": "Cron job to cleanup expired noise events for Smart Classroom Noise Monitor",
+  "main": "cleanup.js",
+  "scripts": {
+    "start": "node cleanup.js",
+    "once": "node cleanup.js --once"
+  },
+  "dependencies": {
+    "node-cron": "^3.0.3",
+    "node-fetch": "^2.7.0"
+  }
+}

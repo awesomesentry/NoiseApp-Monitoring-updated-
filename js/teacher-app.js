@@ -660,6 +660,28 @@ async function renderTeacherSchedulePage() {
       return;
     }
 
+    // Check for conflicts with other teachers' schedules
+    const excludeId = editingId !== null && scheduleSlots[editingId] ? scheduleSlots[editingId].id : null;
+    const conflictResult = await checkScheduleConflictWithOtherTeachers(
+      teacherSession.id,
+      slot.day,
+      slot.startTime,
+      slot.endTime,
+      excludeId
+    );
+
+    if (conflictResult && conflictResult.conflict) {
+      const conflictMessage = `Schedule conflict detected!\n\n` +
+        `Another teacher (${conflictResult.teacherName}) already has a schedule on ${conflictResult.day} ` +
+        `from ${conflictResult.startTime} to ${conflictResult.endTime} with subject "${conflictResult.subject}".\n\n` +
+        `To resolve this conflict, please contact the administrator for assistance.`;
+      
+      errorEl.textContent = conflictMessage;
+      errorEl.classList.remove("hidden");
+      errorEl.classList.add("visible");
+      return;
+    }
+
     const slotDisplay = `${dayToShort(slot.day)} · ${formatTime12h(slot.startTime)} – ${formatTime12h(slot.endTime)} · ${slot.subject || "—"} · ${slot.room || teacherSession.assignedRooms[0] || "—"}`;
 
     if (editingId !== null && scheduleSlots[editingId]) {
@@ -757,7 +779,7 @@ function bindTeacherAudioButtons(logs) {
   });
 }
 
-function playTeacherAudio(logId, logs) {
+async function playTeacherAudio(logId, logs) {
   const log = logs.find((l) => l.id === logId);
   if (!log || !log.audioUrl) return;
   if (!isWithinTeacherAccessWindow(log.datetime)) {
@@ -790,7 +812,15 @@ function playTeacherAudio(logId, logs) {
   audio.addEventListener("contextmenu", (e) => e.preventDefault());
   modal.querySelector("#close-audio").onclick = () => modal.remove();
   modal.onclick = (ev) => { if (ev.target === modal) modal.remove(); };
-  console.info("[AUDIT] Teacher audio", teacherSession.username, logId, new Date().toISOString());
+
+  // Log teacher audio playback to audit trail
+  const recordingId = (log.id || "").slice(0, 8).toUpperCase();
+  const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+  await logTeacherAudit(
+    "Played audio evidence",
+    `Teacher: ${teacherSession?.name || teacherSession?.username || "Unknown"} | Recording: Evidence #${recordingId} | Date and Time: ${now} | Room: ${log.room} (${log.db} dB)`
+  );
+  console.info("[AUDIT] Teacher audio", teacherSession?.username, logId, now);
 }
 
 const TEACHER_RENDERERS = {

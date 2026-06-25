@@ -24,10 +24,12 @@ CREATE TABLE IF NOT EXISTS public.system_settings (
 -- 2. Enable RLS on system_settings
 ALTER TABLE public.system_settings ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Allow read for authenticated users" ON public.system_settings;
 CREATE POLICY "Allow read for authenticated users" 
   ON public.system_settings FOR SELECT 
   USING (auth.role() = 'authenticated');
 
+DROP POLICY IF EXISTS "Allow all for authenticated" ON public.system_settings;
 CREATE POLICY "Allow all for authenticated" 
   ON public.system_settings FOR ALL 
   USING (auth.role() = 'authenticated')
@@ -49,11 +51,13 @@ INSERT INTO public.system_settings (
 -- 4. Enable RLS on profiles
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "Users can read own profile" 
+DROP POLICY IF EXISTS "Users can read own profile" ON public.profiles;
+CREATE POLICY "Users can read own profile" 
   ON public.profiles FOR SELECT 
   USING (auth.uid() = id);
 
-CREATE POLICY IF NOT EXISTS "Users can update own profile" 
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+CREATE POLICY "Users can update own profile" 
   ON public.profiles FOR UPDATE 
   USING (auth.uid() = id)
   WITH CHECK (auth.uid() = id);
@@ -61,22 +65,26 @@ CREATE POLICY IF NOT EXISTS "Users can update own profile"
 -- 5. Enable RLS on noise_events
 ALTER TABLE public.noise_events ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "Authenticated users can read noise_events" 
+DROP POLICY IF EXISTS "Authenticated users can read noise_events" ON public.noise_events;
+CREATE POLICY "Authenticated users can read noise_events" 
   ON public.noise_events FOR SELECT 
   USING (auth.role() = 'authenticated');
 
-CREATE POLICY IF NOT EXISTS "Service role can insert noise_events" 
+DROP POLICY IF EXISTS "Service role can insert noise_events" ON public.noise_events;
+CREATE POLICY "Service role can insert noise_events" 
   ON public.noise_events FOR INSERT 
   WITH CHECK (auth.role() = 'authenticated');
 
 -- 6. Enable RLS on classrooms
 ALTER TABLE public.classrooms ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "Authenticated users can read classrooms" 
+DROP POLICY IF EXISTS "Authenticated users can read classrooms" ON public.classrooms;
+CREATE POLICY "Authenticated users can read classrooms" 
   ON public.classrooms FOR SELECT 
   USING (auth.role() = 'authenticated');
 
-CREATE POLICY IF NOT EXISTS "Authenticated users can manage classrooms" 
+DROP POLICY IF EXISTS "Authenticated users can manage classrooms" ON public.classrooms;
+CREATE POLICY "Authenticated users can manage classrooms" 
   ON public.classrooms FOR ALL 
   USING (auth.role() = 'authenticated')
   WITH CHECK (auth.role() = 'authenticated');
@@ -84,11 +92,13 @@ CREATE POLICY IF NOT EXISTS "Authenticated users can manage classrooms"
 -- 7. Enable RLS on teacher_classrooms
 ALTER TABLE public.teacher_classrooms ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "Authenticated users can read teacher_classrooms" 
+DROP POLICY IF EXISTS "Authenticated users can read teacher_classrooms" ON public.teacher_classrooms;
+CREATE POLICY "Authenticated users can read teacher_classrooms" 
   ON public.teacher_classrooms FOR SELECT 
   USING (auth.role() = 'authenticated');
 
-CREATE POLICY IF NOT EXISTS "Authenticated users can manage teacher_classrooms" 
+DROP POLICY IF EXISTS "Authenticated users can manage teacher_classrooms" ON public.teacher_classrooms;
+CREATE POLICY "Authenticated users can manage teacher_classrooms" 
   ON public.teacher_classrooms FOR ALL 
   USING (auth.role() = 'authenticated')
   WITH CHECK (auth.role() = 'authenticated');
@@ -96,11 +106,13 @@ CREATE POLICY IF NOT EXISTS "Authenticated users can manage teacher_classrooms"
 -- 8. Enable RLS on teacher_schedules
 ALTER TABLE public.teacher_schedules ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "Authenticated users can read teacher_schedules" 
+DROP POLICY IF EXISTS "Authenticated users can read teacher_schedules" ON public.teacher_schedules;
+CREATE POLICY "Authenticated users can read teacher_schedules" 
   ON public.teacher_schedules FOR SELECT 
   USING (auth.role() = 'authenticated');
 
-CREATE POLICY IF NOT EXISTS "Authenticated users can manage teacher_schedules" 
+DROP POLICY IF EXISTS "Authenticated users can manage teacher_schedules" ON public.teacher_schedules;
+CREATE POLICY "Authenticated users can manage teacher_schedules" 
   ON public.teacher_schedules FOR ALL 
   USING (auth.role() = 'authenticated')
   WITH CHECK (auth.role() = 'authenticated');
@@ -108,11 +120,13 @@ CREATE POLICY IF NOT EXISTS "Authenticated users can manage teacher_schedules"
 -- 9. Enable RLS on audit_logs
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "Authenticated users can read audit_logs" 
+DROP POLICY IF EXISTS "Authenticated users can read audit_logs" ON public.audit_logs;
+CREATE POLICY "Authenticated users can read audit_logs" 
   ON public.audit_logs FOR SELECT 
   USING (auth.role() = 'authenticated');
 
-CREATE POLICY IF NOT EXISTS "Authenticated users can insert audit_logs" 
+DROP POLICY IF EXISTS "Authenticated users can insert audit_logs" ON public.audit_logs;
+CREATE POLICY "Authenticated users can insert audit_logs" 
   ON public.audit_logs FOR INSERT 
   WITH CHECK (auth.role() = 'authenticated');
 
@@ -162,7 +176,46 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 14. Grant permissions
+-- 14. Create function to delete expired noise events and audio
+CREATE OR REPLACE FUNCTION public.delete_expired_noise_events(
+  p_retention_days integer DEFAULT NULL
+)
+RETURNS integer AS $$
+DECLARE
+  v_retention_days integer;
+  v_cutoff timestamp with time zone;
+  v_deleted_count integer;
+BEGIN
+  -- Use provided retention days or fetch from system_settings
+  IF p_retention_days IS NULL THEN
+    SELECT COALESCE(retention_days, 14) INTO v_retention_days
+    FROM public.system_settings
+    LIMIT 1;
+  ELSE
+    v_retention_days := p_retention_days;
+  END IF;
+
+  v_cutoff := now() - (v_retention_days || ' days')::interval;
+
+  DELETE FROM public.noise_events
+  WHERE created_at < v_cutoff;
+
+  GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
+
+  -- Log the cleanup action
+  INSERT INTO public.audit_logs (action, detail, user_name, created_at)
+  VALUES (
+    'System cleanup',
+    format('Deleted %s expired noise events older than %s days (cutoff: %s)', v_deleted_count, v_retention_days, v_cutoff),
+    'system',
+    now()
+  );
+
+  RETURN v_deleted_count;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 15. Grant permissions
 GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT ALL ON public.system_settings TO authenticated;
 GRANT ALL ON public.profiles TO authenticated;
@@ -172,3 +225,7 @@ GRANT ALL ON public.teacher_classrooms TO authenticated;
 GRANT ALL ON public.teacher_schedules TO authenticated;
 GRANT ALL ON public.audit_logs TO authenticated;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+
+-- 16. Grant execute on cleanup function to authenticated users
+GRANT EXECUTE ON FUNCTION public.delete_expired_noise_events(integer) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.delete_expired_noise_events() TO authenticated;
