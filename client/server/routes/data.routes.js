@@ -7,6 +7,7 @@ const router = express.Router();
 router.use(attachUser);
 
 router.get("/noise-events", requireAuth, dataController.listNoiseEvents);
+router.delete("/noise-events/:id", requireAuth, requireAdmin, dataController.deleteNoiseEvent);
 router.get("/classrooms", requireAuth, dataController.listClassrooms);
 router.get("/audit-logs", requireAuth, requireAdmin, dataController.listAuditLogs);
 router.post("/audit-logs", requireAuth, dataController.createAuditLog);

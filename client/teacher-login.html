@@ -38,21 +38,28 @@
   </div>
   <script src="js/constants.js"></script>
   <script src="js/api.js"></script>
+  <script src="js/data.js"></script>
   <script src="js/teacher-auth.js"></script>
   <script>
     if (getTeacherSession()) window.location.href = "teacher-app.html";
     document.getElementById("login-form").addEventListener("submit", async (e) => {
       e.preventDefault();
+      const form = e.target;
       const err = document.getElementById("login-error");
       err.classList.remove("visible");
-      const email = document.getElementById("email").value;
-      const pass = document.getElementById("password").value;
-      const session = await loginTeacher(email, pass);
-      if (session) {
-        await new Promise(r => setTimeout(r, 200));
-        window.location.href = "teacher-app.html";
-      } else {
-        err.classList.add("visible");
+      setFormLoading(form, true);
+      try {
+        const email = document.getElementById("email").value;
+        const pass = document.getElementById("password").value;
+        const session = await loginTeacher(email, pass);
+        if (session) {
+          window.location.href = "teacher-app.html";
+        } else {
+          err.classList.add("visible");
+          setFormLoading(form, false);
+        }
+      } catch (_) {
+        setFormLoading(form, false);
       }
     });
   </script>

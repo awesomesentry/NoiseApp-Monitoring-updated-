@@ -165,6 +165,25 @@ async function setTeacherClassrooms(teacherId, classroomIds) {
 }
 
 // ─── Teacher Schedules ───
+const teacherScheduleCacheMap = new Map();
+const TEACHER_SCHEDULE_CACHE_MS = 60 * 1000;
+
+async function getCachedTeacherSchedules(teacherId, force = false) {
+  if (!teacherId) return [];
+  const cached = teacherScheduleCacheMap.get(teacherId);
+  if (!force && cached && Date.now() - cached.at < TEACHER_SCHEDULE_CACHE_MS) {
+    return cached.slots;
+  }
+  const slots = await fetchTeacherSchedules(teacherId).catch(() => []);
+  teacherScheduleCacheMap.set(teacherId, { at: Date.now(), slots: slots || [] });
+  return slots || [];
+}
+
+function invalidateTeacherScheduleCache(teacherId) {
+  if (teacherId) teacherScheduleCacheMap.delete(teacherId);
+  else teacherScheduleCacheMap.clear();
+}
+
 async function fetchTeacherSchedules(teacherId) {
   return apiRequest(`/teachers/${encodeURIComponent(teacherId)}/schedules`);
 }
@@ -249,16 +268,27 @@ async function fetchNoiseEvents(options = {}) {
   if (options.audioOnly) params.set("audioOnly", "true");
   if (options.from) params.set("from", options.from);
   if (options.to) params.set("to", options.to);
+  if (options.offset) params.set("offset", String(options.offset));
   const qs = params.toString();
   return apiRequest(`/noise-events${qs ? `?${qs}` : ""}`);
+}
+
+async function deleteNoiseEvent(id) {
+  return apiRequest(`/noise-events/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 async function fetchClassrooms() {
   return apiRequest("/classrooms");
 }
 
-async function fetchAuditLogs() {
-  return apiRequest("/audit-logs");
+async function fetchAuditLogs(options = {}) {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.offset) params.set("offset", String(options.offset));
+  if (options.search) params.set("search", options.search);
+  if (options.action) params.set("action", options.action);
+  const qs = params.toString();
+  return apiRequest(`/audit-logs${qs ? `?${qs}` : ""}`);
 }
 
 // ─── Session info ───

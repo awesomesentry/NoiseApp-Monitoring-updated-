@@ -35,22 +35,29 @@
   </div>
   <script src="js/constants.js"></script>
   <script src="js/api.js"></script>
+  <script src="js/data.js"></script>
   <script src="js/auth.js"></script>
   <script>
     if (getSession()) window.location.href = "app.html";
     document.getElementById("login-form").addEventListener("submit", async (e) => {
       e.preventDefault();
+      const form = e.target;
       const err = document.getElementById("login-error");
       err.classList.remove("visible");
-      const email = document.getElementById("email").value;
-      const pass = document.getElementById("password").value;
-      const session = await login(email, pass);
-      if (session) {
-        await new Promise(r => setTimeout(r, 200));
-        window.location.href = "app.html";
-      } else {
-        err.textContent = "Invalid email or password. If you haven't created an account yet, please check your credentials.";
-        err.classList.add("visible");
+      setFormLoading(form, true);
+      try {
+        const email = document.getElementById("email").value;
+        const pass = document.getElementById("password").value;
+        const session = await login(email, pass);
+        if (session) {
+          window.location.href = "app.html";
+        } else {
+          err.textContent = "Invalid email or password. If you haven't created an account yet, please check your credentials.";
+          err.classList.add("visible");
+          setFormLoading(form, false);
+        }
+      } catch (_) {
+        setFormLoading(form, false);
       }
     });
   </script>

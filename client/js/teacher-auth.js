@@ -126,19 +126,18 @@ function touchTeacherSession() {
 
 async function teacherLogout() {
   const session = getTeacherSession();
-  if (session) {
-    await logTeacherAudit("Teacher logout", `${session.email} signed out`);
-    try {
-      await signOutUser(session.accessToken);
-    } catch (_) {}
-  }
+  const email = session?.email;
+  const token = session?.accessToken;
   sessionStorage.removeItem(TEACHER_SESSION_KEY);
   clearAuthToken();
   setCurrentSessionInfo(null);
-  if (typeof stopTeacherAutoRefresh === 'function') try { stopTeacherAutoRefresh(); } catch (_) {}
-  if (typeof stopAutoRefresh === 'function') try { stopAutoRefresh(); } catch (_) {}
-  await new Promise(r => setTimeout(r, 100));
+  if (typeof stopTeacherAutoRefresh === "function") try { stopTeacherAutoRefresh(); } catch (_) {}
+  if (typeof stopAutoRefresh === "function") try { stopAutoRefresh(); } catch (_) {}
   window.location.href = "teacher-login.html";
+  if (session) {
+    logTeacherAudit("Teacher logout", `${email} signed out`).catch(() => {});
+    if (token) signOutUser(token).catch(() => {});
+  }
 }
 
 function requireTeacherAuth() {
@@ -152,9 +151,9 @@ function requireTeacherAuth() {
 }
 
 // ─── Teacher Schedule (database-backed) ───
-async function getTeacherScheduleDb(teacherId) {
+async function getTeacherScheduleDb(teacherId, force = false) {
   try {
-    const slots = await fetchTeacherSchedules(teacherId);
+    const slots = await getCachedTeacherSchedules(teacherId, force);
     return { slots: slots || [] };
   } catch (_) {
     return { slots: [] };
@@ -408,14 +407,14 @@ function filterLogsByDateTime(logs, fromDate, toDate, fromTime, toTime) {
   });
 }
 
-async function filterTeacherEvents(logs, session) {
-  const schedule = await getTeacherScheduleDb(session.id);
-  const slots = schedule.slots || [];
+async function filterTeacherEvents(logs, session, slots = null) {
+  const scheduleSlots =
+    slots !== null ? slots : (await getTeacherScheduleDb(session.id)).slots || [];
   const results = [];
   for (const l of logs) {
     if (
       isRedEvent(l) &&
-      (await matchesTeacherEvent(l, session, slots)) &&
+      (await matchesTeacherEvent(l, session, scheduleSlots)) &&
       isWithinTeacherAccessWindow(l.datetime)
     ) {
       results.push(l);
@@ -424,8 +423,8 @@ async function filterTeacherEvents(logs, session) {
   return results;
 }
 
-async function filterTeacherAudioLogs(logs, session) {
-  const events = await filterTeacherEvents(logs, session);
+async function filterTeacherAudioLogs(logs, session, slots = null) {
+  const events = await filterTeacherEvents(logs, session, slots);
   return events.filter((l) => l.audioRecorded && l.audioUrl);
 }
 

@@ -11,13 +11,20 @@ const LOG_FILTER_STATE = {
   severity: "",
   subject: "",
 };
+const AUDIT_FILTER_STATE = {
+  currentPage: 1,
+  search: "",
+  action: "",
+};
+const TEACHER_ADMIN_STATE = { selectedId: null };
 
 const ROUTES = {
   dashboard: { title: "Dashboard", keyword: "At-a-glance monitoring" },
   logs: { title: "Noise Logs", keyword: "Primary system records — noise_events" },
   audio: { title: "Audio Evidence", keyword: "RED events with audio — noise_events" },
-  settings: { title: "System Settings", keyword: "Admin — thresholds & alerts" },
   reports: { title: "Reports & Analytics", keyword: "Evaluation & decision support" },
+  teachers: { title: "Teacher Management", keyword: "Assign classrooms & schedules" },
+  settings: { title: "System Settings", keyword: "Admin — thresholds & alerts" },
   audit: { title: "Audit Trail", keyword: "audit_logs table" },
 };
 
@@ -222,7 +229,7 @@ async function renderDashboard(useLoading = true) {
   destroyCharts();
   if (useLoading) showLoading();
   try {
-    const logs = filterLogsForUser(await loadNoiseEvents(), session);
+    const logs = filterLogsForUser(await loadNoiseEventsForAdmin(), session);
     const assigned = session.assignedRooms[0] || session.deviceIds?.[0];
     const stats = getDashboardStats(logs, session.role, assigned);
 
@@ -296,7 +303,7 @@ async function renderDashboard(useLoading = true) {
 
 async function refreshDashboard() {
   try {
-    const logs = filterLogsForUser(await loadNoiseEvents(), session);
+    const logs = filterLogsForUser(await loadNoiseEventsForAdmin(), session);
     const assigned = session.assignedRooms[0] || session.deviceIds?.[0];
     const stats = getDashboardStats(logs, session.role, assigned);
 
@@ -348,7 +355,7 @@ async function refreshDashboard() {
 async function renderLogs() {
   showLoading();
   try {
-    const logs = filterLogsForUser(await loadNoiseEvents(), session);
+    const logs = filterLogsForUser(await loadNoiseEventsForAdmin(), session);
     const classrooms = await loadClassrooms();
     const rooms = getRoomList(logs, classrooms);
     let currentPage = LOG_FILTER_STATE.currentPage || 1;
@@ -406,7 +413,7 @@ async function renderLogs() {
                   <th>Audio</th>
                   <th>Duration</th>
                   <th>Subject</th>
-                  <th></th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -469,6 +476,9 @@ async function renderLogs() {
                       : l.status === "red" && l.audioRecorded
                         ? `<span style="color:var(--muted);font-size:0.75rem">Processing…</span>`
                         : "—";
+                  const deleteBtn = isAdmin(session)
+                    ? `<button type="button" class="btn btn-danger btn-sm delete-log" data-id="${l.id}" data-label="${l.room} · ${l.date} ${l.time}">Delete</button>`
+                    : "";
                   return `
             <div class="event-card">
               <div class="event-card-main">
@@ -494,7 +504,7 @@ async function renderLogs() {
                 <div class="event-card-field"><div class="field-label">Buzzer</div><div class="field-value yes-no ${l.buzzer ? "yes" : "no"}">${l.buzzer ? "Yes" : "No"}</div></div>
                 <div class="event-card-field"><div class="field-label">Audio</div><div class="field-value yes-no ${l.audioRecorded ? "yes" : "no"}">${l.audioRecorded ? "Yes" : "No"}</div></div>
                 <div class="event-card-field"><div class="field-label">Subject</div><div class="field-value">${l.subject}<br><small style="color:var(--muted)">${l.teacher}</small></div></div>
-                <div class="event-card-field"><div class="field-label">Action</div><div class="field-value">${reviewBtn}</div></div>
+                <div class="event-card-field"><div class="field-label">Action</div><div class="field-value">${reviewBtn} ${deleteBtn}</div></div>
               </div>
             </div>`;
                 })
@@ -514,6 +524,9 @@ async function renderLogs() {
                       : l.status === "red" && l.audioRecorded
                         ? `<span style="color:var(--muted);font-size:0.75rem">Processing…</span>`
                         : "—";
+                  const deleteBtn = isAdmin(session)
+                    ? `<button type="button" class="btn btn-danger btn-sm delete-log" data-id="${l.id}" data-label="${l.room} · ${l.date} ${l.time}">Delete</button>`
+                    : "";
                   return `<tr>
                   <td>${l.date} ${l.time}</td>
                   <td>${l.room}</td>
@@ -524,7 +537,7 @@ async function renderLogs() {
                   <td class="yes-no ${l.audioRecorded ? "yes" : "no"}">${l.audioRecorded ? "Yes" : "No"}</td>
                   <td>${l.durationSec ? l.durationSec + "s" : "—"}</td>
                   <td>${l.subject}<br><small style="color:var(--muted)">${l.teacher}</small></td>
-                  <td>${reviewBtn}</td>
+                  <td><div style="display:flex;gap:0.35rem;flex-wrap:wrap">${reviewBtn}${deleteBtn}</div></td>
                 </tr>`;
                 })
                 .join("");
@@ -577,6 +590,9 @@ async function renderLogs() {
       if (e.target.classList.contains("review-clip")) {
         playAudioClip(e.target.dataset.id, logs);
       }
+      if (e.target.classList.contains("delete-log")) {
+        handleAdminDeleteEvent(e.target.dataset.id, e.target.dataset.label);
+      }
     });
     applyFilters(1);
   } catch (e) {
@@ -613,7 +629,7 @@ async function renderAudio() {
 
   showLoading();
   try {
-    const logs = filterLogsForUser(await loadNoiseEvents(), session);
+    const logs = filterLogsForUser(await loadNoiseEventsForAdmin(), session);
     const allClips = getAudioClipsFromLogs(logs, "admin", null);
     let currentPage = 1;
     const AUDIO_PAGE_SIZE = 6;
@@ -637,6 +653,7 @@ async function renderAudio() {
           </div>
           <audio class="hidden-audio" data-id="${c.id}" src="${c.audioUrl}" style="display:none"></audio>
           <div class="retention-tag">Expires in ${c.expiresIn} · Retention ${c.retentionDays} days</div>
+          <button type="button" class="btn btn-danger btn-sm delete-audio-log" data-id="${c.id}" data-label="${c.room} · ${c.time}" style="margin-top:0.5rem">Delete audio log</button>
         </div>`).join("")}</div>`;
 
       const paginationHtml = totalClips > AUDIO_PAGE_SIZE
@@ -671,6 +688,12 @@ async function renderAudio() {
             audio.play();
           }
           console.info("[AUDIT] Admin audio", btn.dataset.id, session.username);
+        });
+      });
+
+      document.querySelectorAll(".delete-audio-log").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          handleAdminDeleteEvent(btn.dataset.id, btn.dataset.label);
         });
       });
 
@@ -789,6 +812,8 @@ async function renderSettings() {
 
   document.getElementById("settings-form").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    setButtonLoading(submitBtn, true, "Saving…");
     const fd = new FormData(e.target);
     settings.thresholdGreen = Number(fd.get("thresholdGreen"));
     settings.thresholdYellow = Number(fd.get("thresholdYellow"));
@@ -819,14 +844,44 @@ async function renderSettings() {
       document.getElementById("settings-saved").classList.remove("hidden");
     } catch (err) {
       alert("Failed to save settings: " + err.message);
+    } finally {
+      setButtonLoading(submitBtn, false);
     }
   });
+}
+
+async function runAdminExport({ period, format }) {
+  const all = await loadNoiseEventsForAdmin(true);
+  const filtered = filterLogsForUser(all, session);
+  const ranged = filterLogsForExportPeriod(filtered, period);
+  const stamp = new Date().toISOString().slice(0, 10);
+  if (format === "csv") {
+    exportLogsToCsv(ranged, `noise_logs_${period}_${stamp}.csv`);
+    return;
+  }
+  generateWeeklyPdf(ranged, { role: "admin", session, period });
+}
+
+async function handleAdminDeleteEvent(id, label) {
+  const confirmed = await showConfirmModal({
+    title: "Delete this record?",
+    message: `This permanently removes the noise event${label ? `: <strong>${label}</strong>` : ""}. Audio linked to this row will also be removed.`,
+    confirmText: "Delete",
+    cancelText: "Cancel",
+    danger: true,
+  });
+  if (!confirmed) return;
+  await adminDeleteNoiseEvent(id, label || id);
+  const route = getRoute();
+  if (route === "logs") await renderLogs();
+  else if (route === "audio") await renderAudio();
+  else await navigate();
 }
 
 async function renderReports() {
   showLoading();
   try {
-    const logs = filterLogsForUser(await loadNoiseEvents(), session);
+    const logs = filterLogsForUser(await loadNoiseEventsForAdmin(), session);
     const byRoom = aggregateIncidentsByRoom(
       logs.filter((l) => l.status === "red")
     );
@@ -835,8 +890,7 @@ async function renderReports() {
 
     document.getElementById("page-content").innerHTML = `
       <div class="export-bar">
-        <button type="button" class="btn btn-secondary" id="export-monthly-pdf">Export monthly PDF</button>
-        <button type="button" class="btn btn-secondary" id="export-csv">Export monthly CSV</button>
+        <button type="button" class="btn btn-secondary" id="export-report-btn">Export report</button>
       </div>
       <div class="charts-row">
         <div class="panel">
@@ -906,16 +960,11 @@ async function renderReports() {
       hm.appendChild(el);
     });
 
-    document.getElementById("export-monthly-pdf").addEventListener("click", async () => {
-      const all = await loadNoiseEvents();
-      generateWeeklyPdf(all, { role: isAdmin(session) ? 'admin' : 'teacher', session, monthly: true });
-    });
-    document.getElementById("export-csv").addEventListener("click", async () => {
-      const all = await loadNoiseEvents();
-      const filtered = filterLogsForUser(all, session);
-      const monthlyLogs = filterLogsToMonthlyRange(filtered);
-      const monthKey = new Date().toISOString().slice(0, 7);
-      exportLogsToCsv(monthlyLogs, `noise_logs_${monthKey}.csv`);
+    document.getElementById("export-report-btn").addEventListener("click", () => {
+      showExportModal({
+        title: "Export admin report",
+        onExport: runAdminExport,
+      });
     });
   } catch (e) {
     showError(e.message);
@@ -932,35 +981,300 @@ async function renderAudit() {
 
   showLoading();
   try {
+    let currentPage = AUDIT_FILTER_STATE.currentPage || 1;
+    const pageSize = 20;
+    const offset = (currentPage - 1) * pageSize;
     let rows = [];
     try {
-      rows = await fetchAuditLogs();
+      rows = await fetchAuditLogs({
+        limit: pageSize,
+        offset,
+        search: AUDIT_FILTER_STATE.search,
+        action: AUDIT_FILTER_STATE.action,
+      });
     } catch {
       rows = [];
     }
-    const entries = rows.length ? rows.map(mapAuditRow) : [];
+    const entries = rows.map(mapAuditRow);
+    const hasMore = rows.length === pageSize;
+    const totalPages = hasMore ? currentPage + 1 : currentPage;
 
     document.getElementById("page-content").innerHTML = `
-      <div class="policy-banner">
-        <strong>audit_logs table</strong>
-        Threshold changes · Buzzer configuration · Audio access
+      <div class="filter-toggle-bar">
+        <button type="button" class="btn-filter-toggle" id="audit-filter-toggle" data-target="audit-filters">
+          <span class="toggle-chevron">▼</span> Filters
+        </button>
+      </div>
+      <div class="filters-bar" id="audit-filters">
+        <div class="form-group">
+          <label>Search</label>
+          <input type="text" id="audit-search" placeholder="Action, user, detail…" value="${AUDIT_FILTER_STATE.search || ""}" />
+        </div>
+        <div class="form-group">
+          <label>Action type</label>
+          <input type="text" id="audit-action" placeholder="e.g. login, Settings" value="${AUDIT_FILTER_STATE.action || ""}" />
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" id="audit-filter-reset">Reset</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="audit-filter-apply">Apply</button>
       </div>
       <div class="panel">
-        ${
-          entries.length === 0
-            ? `<div class="empty-state">No rows in audit_logs yet.</div>`
-            : `<ul class="audit-list">${entries
-                .map(
-                  (a) =>
-                    `<li><span>${a.time}</span> — <strong>${a.action}</strong> by ${a.user}: ${a.detail}</li>`
-                )
-                .join("")}</ul>`
-        }
+        <p style="font-size:0.75rem;color:var(--muted);margin:0 0 0.75rem" id="audit-count">
+          ${entries.length} record(s) on page ${currentPage}
+        </p>
+        <div class="table-scroll">
+          <table class="data-table" id="audit-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Action</th>
+                <th>User</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${
+                entries.length === 0
+                  ? `<tr><td colspan="4" class="empty-state">No audit log entries match your filters.</td></tr>`
+                  : entries
+                      .map(
+                        (a) => `<tr>
+                  <td>${a.time}</td>
+                  <td><strong>${a.action}</strong></td>
+                  <td>${a.user}</td>
+                  <td style="max-width:24rem;word-break:break-word">${a.detail}</td>
+                </tr>`
+                      )
+                      .join("")
+              }
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination-bar" id="audit-pagination">
+          <span class="pagination-info">Page ${currentPage}${hasMore ? "+" : ""}</span>
+          <div class="pagination-controls">
+            <button type="button" class="btn btn-secondary btn-sm" id="audit-prev" ${currentPage <= 1 ? "disabled" : ""}>← Prev</button>
+            <span class="page-num">Page ${currentPage}</span>
+            <button type="button" class="btn btn-secondary btn-sm" id="audit-next" ${!hasMore ? "disabled" : ""}>Next →</button>
+          </div>
+        </div>
       </div>
     `;
+
+    document.getElementById("audit-filter-apply").addEventListener("click", () => {
+      AUDIT_FILTER_STATE.search = document.getElementById("audit-search").value.trim();
+      AUDIT_FILTER_STATE.action = document.getElementById("audit-action").value.trim();
+      AUDIT_FILTER_STATE.currentPage = 1;
+      renderAudit();
+    });
+    document.getElementById("audit-filter-reset").addEventListener("click", () => {
+      AUDIT_FILTER_STATE.search = "";
+      AUDIT_FILTER_STATE.action = "";
+      AUDIT_FILTER_STATE.currentPage = 1;
+      renderAudit();
+    });
+    document.getElementById("audit-filter-toggle").addEventListener("click", function () {
+      const filtersEl = document.getElementById("audit-filters");
+      filtersEl.classList.toggle("collapsed");
+      this.classList.toggle("collapsed");
+    });
+    document.getElementById("audit-prev")?.addEventListener("click", () => {
+      if (currentPage > 1) {
+        AUDIT_FILTER_STATE.currentPage = currentPage - 1;
+        renderAudit();
+      }
+    });
+    document.getElementById("audit-next")?.addEventListener("click", () => {
+      if (hasMore) {
+        AUDIT_FILTER_STATE.currentPage = currentPage + 1;
+        renderAudit();
+      }
+    });
   } catch (e) {
     showError(e.message);
   }
+}
+
+async function renderTeachers() {
+  if (!isAdmin(session)) {
+    document.getElementById("page-content").innerHTML =
+      `<div class="empty-state">Teacher management is admin-only.</div>`;
+    return;
+  }
+
+  showLoading();
+  try {
+    const [profiles, classrooms] = await Promise.all([fetchProfiles(), loadClassrooms()]);
+    const teachers = (profiles || []).filter((p) => p.role === "teacher");
+    const selectedId = TEACHER_ADMIN_STATE.selectedId;
+    let selectedTeacher = teachers.find((t) => t.id === selectedId) || null;
+    let assigned = [];
+    let scheduleSlots = [];
+    if (selectedTeacher) {
+      assigned = await fetchTeacherClassrooms(selectedTeacher.id).catch(() => []);
+      scheduleSlots = await getCachedTeacherSchedules(selectedTeacher.id).catch(() => []);
+    }
+
+    document.getElementById("page-content").innerHTML = `
+      <div class="policy-banner">
+        <strong>Teacher management</strong>
+        Assign classrooms and manage weekly schedules for each teacher account.
+      </div>
+      <div class="teacher-admin-grid">
+        <div class="panel">
+          <h3>Teachers (${teachers.length})</h3>
+          ${
+            teachers.length === 0
+              ? `<div class="empty-state">No teacher accounts yet.</div>`
+              : `<ul class="teacher-admin-list">${teachers
+                  .map(
+                    (t) => `<li class="${t.id === selectedId ? "active" : ""}">
+                <button type="button" class="teacher-pick" data-id="${t.id}">
+                  <strong>${t.full_name || t.email || t.id}</strong>
+                  <span>${t.email || "—"}</span>
+                </button>
+              </li>`
+                  )
+                  .join("")}</ul>`
+          }
+        </div>
+        <div class="panel" id="teacher-admin-detail">
+          ${
+            !selectedTeacher
+              ? `<div class="empty-state">Select a teacher to manage classrooms and schedule.</div>`
+              : renderTeacherAdminDetail(selectedTeacher, assigned, scheduleSlots, classrooms)
+          }
+        </div>
+      </div>
+    `;
+
+    document.querySelectorAll(".teacher-pick").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        TEACHER_ADMIN_STATE.selectedId = btn.dataset.id;
+        renderTeachers();
+      });
+    });
+
+    if (selectedTeacher) bindTeacherAdminDetail(selectedTeacher, classrooms);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+function renderTeacherAdminDetail(teacher, assigned, scheduleSlots, classrooms) {
+  const assignedIds = new Set((assigned || []).map((c) => c.id));
+  return `
+    <h3>${teacher.full_name || teacher.email}</h3>
+    <p style="font-size:0.8rem;color:var(--muted);margin-bottom:1rem">${teacher.email || teacher.id}</p>
+    <div class="form-group">
+      <label for="teacher-admin-name">Display name</label>
+      <input type="text" id="teacher-admin-name" value="${teacher.full_name || ""}" />
+    </div>
+    <div class="form-group">
+      <label>Linked classrooms</label>
+      <div class="checkbox-grid" id="teacher-admin-classrooms">
+        ${(classrooms || [])
+          .map(
+            (c) => `<label class="checkbox-row">
+            <input type="checkbox" value="${c.id}" ${assignedIds.has(c.id) ? "checked" : ""} />
+            <span>${c.name || c.id}</span>
+          </label>`
+          )
+          .join("")}
+      </div>
+    </div>
+    <button type="button" class="btn btn-primary btn-sm" id="teacher-admin-save-profile">Save profile & classrooms</button>
+    <hr style="border-color:var(--border);margin:1.25rem 0" />
+    <h4>Schedule</h4>
+    <div class="schedule-form-grid">
+      <div class="form-group"><label>Day</label>
+        <select id="admin-slot-day">
+          ${["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"].map((d) => `<option>${d}</option>`).join("")}
+        </select>
+      </div>
+      <div class="form-group"><label>Start</label><input type="time" id="admin-slot-start" value="08:00" /></div>
+      <div class="form-group"><label>End</label><input type="time" id="admin-slot-end" value="09:00" /></div>
+      <div class="form-group"><label>Subject</label><input type="text" id="admin-slot-subject" /></div>
+      <div class="form-group"><label>Room / device</label><input type="text" id="admin-slot-room" placeholder="esp32_noise_01" /></div>
+    </div>
+    <button type="button" class="btn btn-secondary btn-sm" id="admin-slot-add">Add schedule slot</button>
+    <ul class="schedule-slots-list" id="admin-schedule-list" style="margin-top:1rem">
+      ${(scheduleSlots || [])
+        .map(
+          (slot) => `<li>
+          <div class="schedule-slot-info">
+            <strong>${(slot.day || "").slice(0, 3)}</strong>
+            ${(slot.start_time || "").slice(0, 5)} – ${(slot.end_time || "").slice(0, 5)}
+            · ${slot.subject || "—"} · ${slot.room || "—"}
+          </div>
+          <button type="button" class="btn btn-danger btn-sm admin-remove-slot" data-id="${slot.id}">Remove</button>
+        </li>`
+        )
+        .join("")}
+    </ul>
+  `;
+}
+
+function bindTeacherAdminDetail(teacher, classrooms) {
+  document.getElementById("teacher-admin-save-profile")?.addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget;
+    setButtonLoading(btn, true, "Saving…");
+    try {
+      const name = document.getElementById("teacher-admin-name").value.trim();
+      await upsertProfile(teacher.id, { full_name: name, role: "teacher" });
+      const ids = [...document.querySelectorAll("#teacher-admin-classrooms input:checked")].map(
+        (el) => el.value
+      );
+      await setTeacherClassrooms(teacher.id, ids);
+      await logAdminAudit("Updated teacher", `${name || teacher.email} — classrooms & profile`);
+      invalidateTeacherScheduleCache(teacher.id);
+      await renderTeachers();
+    } catch (err) {
+      alert("Save failed: " + err.message);
+      setButtonLoading(btn, false);
+    }
+  });
+
+  document.getElementById("admin-slot-add")?.addEventListener("click", async (ev) => {
+    const btn = ev.currentTarget;
+    setButtonLoading(btn, true, "Adding…");
+    try {
+      await upsertTeacherSchedule({
+        teacher_id: teacher.id,
+        day: document.getElementById("admin-slot-day").value,
+        start_time: document.getElementById("admin-slot-start").value,
+        end_time: document.getElementById("admin-slot-end").value,
+        subject: document.getElementById("admin-slot-subject").value.trim() || null,
+        room: document.getElementById("admin-slot-room").value.trim() || null,
+      });
+      invalidateTeacherScheduleCache(teacher.id);
+      await logAdminAudit("Updated teacher schedule", `Added slot for ${teacher.full_name || teacher.email}`);
+      await renderTeachers();
+    } catch (err) {
+      alert("Failed to add slot: " + err.message);
+      setButtonLoading(btn, false);
+    }
+  });
+
+  document.querySelectorAll(".admin-remove-slot").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const confirmed = await showConfirmModal({
+        title: "Remove schedule slot?",
+        message: "Remove this schedule slot for the teacher?",
+        confirmText: "Remove",
+        danger: true,
+      });
+      if (!confirmed) return;
+      setButtonLoading(btn, true, "Removing…");
+      try {
+        await deleteTeacherSchedule(btn.dataset.id);
+        invalidateTeacherScheduleCache(teacher.id);
+        await renderTeachers();
+      } catch (err) {
+        alert("Failed to remove slot: " + err.message);
+        setButtonLoading(btn, false);
+      }
+    });
+  });
 }
 
 const RENDERERS = {
@@ -969,12 +1283,13 @@ const RENDERERS = {
   audio: renderAudio,
   settings: renderSettings,
   reports: renderReports,
+  teachers: renderTeachers,
   audit: renderAudit,
 };
 
 async function navigate() {
   let route = getRoute();
-  if (!isAdmin(session) && ["audio", "settings", "audit"].includes(route)) {
+  if (!isAdmin(session) && ["audio", "settings", "audit", "teachers"].includes(route)) {
     route = "dashboard";
     location.hash = "dashboard";
   }
@@ -1021,7 +1336,7 @@ function initMobileNav() {
 function initAutoRefresh() {
   if (autoRefreshInterval) clearInterval(autoRefreshInterval);
   autoRefreshInterval = setInterval(() => {
-    loadNoiseEvents(true).catch(() => {});
+    loadNoiseEventsForAdmin(true).catch(() => {});
   }, AUTO_REFRESH_INTERVAL);
 }
 

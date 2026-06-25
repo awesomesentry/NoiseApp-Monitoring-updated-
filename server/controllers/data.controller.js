@@ -6,8 +6,10 @@ const listNoiseEvents = asyncHandler(async (req, res) => {
   params.set("select", "*");
   params.set("order", "created_at.desc");
 
-  const { limit, room, deviceId, severity, audioOnly, from, to } = req.query;
-  if (limit) params.set("limit", String(limit));
+  const { limit, room, deviceId, severity, audioOnly, from, to, offset } = req.query;
+  const rowLimit = limit ? String(limit) : "1000";
+  params.set("limit", rowLimit);
+  if (offset) params.set("offset", String(offset));
   if (room) params.set("room", `eq.${room}`);
   if (deviceId) params.set("device_id", `eq.${deviceId}`);
   if (severity) params.set("warning_color", `eq.${String(severity).toUpperCase()}`);
@@ -16,8 +18,8 @@ const listNoiseEvents = asyncHandler(async (req, res) => {
     params.set("audio_url", "not.is.null");
     params.set("warning_color", "eq.RED");
   }
-  if (from) params.set("created_at", `gte.${from}T00:00:00`);
-  if (to) params.append("created_at", `lte.${to}T23:59:59`);
+  if (from) params.set("event_time_utc", `gte.${from}T00:00:00`);
+  if (to) params.append("event_time_utc", `lte.${to}T23:59:59`);
 
   const rows = await supabase.get(
     supabase.TABLES.noiseEvents,
@@ -25,6 +27,17 @@ const listNoiseEvents = asyncHandler(async (req, res) => {
     req.accessToken
   );
   res.json(rows);
+});
+
+const deleteNoiseEvent = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: "Event id is required" });
+  await supabase.del(
+    supabase.TABLES.noiseEvents,
+    `id=eq.${id}`,
+    req.accessToken
+  );
+  res.json({ ok: true, id });
 });
 
 const listClassrooms = asyncHandler(async (req, res) => {
@@ -54,28 +67,40 @@ function buildAuditRecord(body, user) {
 }
 
 const listAuditLogs = asyncHandler(async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+  const offset = parseInt(req.query.offset, 10) || 0;
+  const search = (req.query.search || "").trim();
+  const actionFilter = (req.query.action || "").trim();
+
+  let query = `select=*,profiles:actor_id(full_name)&order=created_at.desc&limit=${limit}&offset=${offset}`;
+  if (actionFilter) query += `&action=ilike.*${encodeURIComponent(actionFilter)}*`;
+
   let rows = [];
   try {
-    rows = await supabase.get(
-      supabase.TABLES.auditLogs,
-      "select=*,profiles:actor_id(full_name)&order=created_at.desc&limit=50",
-      req.accessToken
-    );
+    rows = await supabase.get(supabase.TABLES.auditLogs, query, req.accessToken);
   } catch {
-    rows = await supabase.get(
-      supabase.TABLES.auditLogs,
-      "select=*&order=created_at.desc&limit=50",
-      req.accessToken
+    query = `select=*&order=created_at.desc&limit=${limit}&offset=${offset}`;
+    if (actionFilter) query += `&action=ilike.*${encodeURIComponent(actionFilter)}*`;
+    rows = await supabase.get(supabase.TABLES.auditLogs, query, req.accessToken);
+  }
+
+  let entries = rows.map((row) => ({
+    ...row,
+    actor_name: row.profiles?.full_name || null,
+    profiles: undefined,
+  }));
+
+  if (search) {
+    const q = search.toLowerCase();
+    entries = entries.filter(
+      (row) =>
+        (row.action || "").toLowerCase().includes(q) ||
+        (row.detail || "").toLowerCase().includes(q) ||
+        (row.actor_name || "").toLowerCase().includes(q)
     );
   }
 
-  res.json(
-    rows.map((row) => ({
-      ...row,
-      actor_name: row.profiles?.full_name || null,
-      profiles: undefined,
-    }))
-  );
+  res.json(entries);
 });
 
 const createAuditLog = asyncHandler(async (req, res) => {
@@ -108,6 +133,7 @@ const updateSettings = asyncHandler(async (req, res) => {
 
 module.exports = {
   listNoiseEvents,
+  deleteNoiseEvent,
   listClassrooms,
   listAuditLogs,
   createAuditLog,

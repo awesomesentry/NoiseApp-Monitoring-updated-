@@ -46,11 +46,14 @@
       </div>
     </div>
   </div>    <script src="js/constants.js"></script>
-    <script src="js/api.js"></script>  <script src="js/teacher-auth.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/data.js"></script>
+    <script src="js/teacher-auth.js"></script>
   <script>
     if (getTeacherSession()) window.location.href = "teacher-app.html";
     document.getElementById("signup-form").addEventListener("submit", async (e) => {
       e.preventDefault();
+      const form = e.target;
       const err = document.getElementById("signup-error");
       const ok = document.getElementById("signup-success");
       err.classList.remove("visible");
@@ -64,22 +67,29 @@
         return;
       }
 
-      const result = await signupTeacher({
-        name: document.getElementById("name").value,
-        email: document.getElementById("email").value,
-        password,
-      });
+      setButtonLoading(form.querySelector('button[type="submit"]'), true, "Creating account…");
+      try {
+        const result = await signupTeacher({
+          name: document.getElementById("name").value,
+          email: document.getElementById("email").value,
+          password,
+        });
 
-      if (!result.ok) {
-        err.textContent = result.error;
-        err.classList.add("visible");
-        return;
+        if (!result.ok) {
+          err.textContent = result.error;
+          err.classList.add("visible");
+          setFormLoading(form, false);
+          setButtonLoading(form.querySelector('button[type="submit"]'), false);
+          return;
+        }
+
+        ok.classList.remove("hidden");
+        setTimeout(() => {
+          window.location.href = "teacher-login.html";
+        }, 1200);
+      } catch (_) {
+        setFormLoading(form, false);
       }
-
-      ok.classList.remove("hidden");
-      setTimeout(() => {
-        window.location.href = "teacher-login.html";
-      }, 1500);
     });
   </script>
 </body>

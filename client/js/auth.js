@@ -74,20 +74,18 @@ function touchSession() {
 
 async function logout() {
   const session = getSession();
-  if (session) {
-    await logAdminAudit("Admin logout", `${session.email} signed out`);
-    // Sign out from Supabase Auth
-    try {
-      await signOutUser(session.accessToken);
-    } catch (_) {}
-  }
+  const email = session?.email;
+  const token = session?.accessToken;
   sessionStorage.removeItem(SESSION_KEY);
   clearAuthToken();
   setCurrentSessionInfo(null);
-  if (typeof stopAutoRefresh === 'function') try { stopAutoRefresh(); } catch (_) {}
-  if (typeof stopTeacherAutoRefresh === 'function') try { stopTeacherAutoRefresh(); } catch (_) {}
-  await new Promise(r => setTimeout(r, 100));
+  if (typeof stopAutoRefresh === "function") try { stopAutoRefresh(); } catch (_) {}
+  if (typeof stopTeacherAutoRefresh === "function") try { stopTeacherAutoRefresh(); } catch (_) {}
   window.location.href = "index.html";
+  if (session) {
+    logAdminAudit("Admin logout", `${email} signed out`).catch(() => {});
+    if (token) signOutUser(token).catch(() => {});
+  }
 }
 
 function requireAuth() {

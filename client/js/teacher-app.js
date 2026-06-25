@@ -112,18 +112,28 @@ function renderEventCard(l, options = {}) {
     </div>`;
 }
 
-// ─── DB-backed schedule helpers ───
-async function getTeacherScheduleSlotForEvent(log, session) {
-  if (!session) return null;
-  const scheduleSlots = await fetchTeacherSchedules(session.id);
-  const slots = scheduleSlots || [];
-  if (!slots.length) return null;
+// ─── DB-backed schedule helpers (single fetch, no N+1) ───
+function getTeacherScheduleSlotForEvent(log, slots) {
+  if (!slots?.length) return null;
 
-  const eventDate = new Date(log.datetime);
-  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const eventDay = dayNames[eventDate.getDay()];
-  const eventMins = eventDate.getHours() * 60 + eventDate.getMinutes();
+  const manila =
+    typeof getManilaDateParts === "function"
+      ? getManilaDateParts(log.datetime)
+      : null;
+  const eventDay = manila?.dayShort;
+  const eventMins = manila?.minutesOfDay;
 
+  if (!eventDay) {
+    const eventDate = new Date(log.datetime);
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const fallbackDay = dayNames[eventDate.getDay()];
+    const fallbackMins = eventDate.getHours() * 60 + eventDate.getMinutes();
+    return findScheduleSlot(slots, log, fallbackDay, fallbackMins);
+  }
+  return findScheduleSlot(slots, log, eventDay, eventMins);
+}
+
+function findScheduleSlot(slots, log, eventDay, eventMins) {
   return slots.find((slot) => {
     const slotDay = slot.day ? slot.day.substring(0, 3) : slot.day;
     if (slotDay !== eventDay) return false;
@@ -144,15 +154,42 @@ async function getTeacherScheduleSlotForEvent(log, session) {
   });
 }
 
-async function decorateTeacherEventForDisplay(log, session) {
+function decorateTeacherEventForDisplay(log, session, slots = []) {
   if (!session) return log;
-  const slot = await getTeacherScheduleSlotForEvent(log, session);
+  const slot = getTeacherScheduleSlotForEvent(log, slots);
   const subject =
-    (slot?.subject && slot.subject !== "—")
+    slot?.subject && slot.subject !== "—"
       ? slot.subject
-      : (session.defaultSubject || log.subject || "—");
+      : session.defaultSubject || log.subject || "—";
   const teacher = session.name || log.teacher || "—";
   return { ...log, subject, teacher };
+}
+
+function decorateTeacherEventsBatch(logs, session, slots = []) {
+  return logs.map((l) => decorateTeacherEventForDisplay(l, session, slots));
+}
+
+async function loadTeacherPageEvents(session, force = false) {
+  const schedule = await getTeacherScheduleDb(session.id, force);
+  const slots = schedule.slots || [];
+  const allLogs = await loadNoiseEventsForTeacher(session, force);
+  const rawEvents = await filterTeacherEvents(allLogs, session, slots);
+  const events = decorateTeacherEventsBatch(rawEvents, session, slots);
+  const withAudio = rawEvents
+    .filter((l) => l.audioRecorded && l.audioUrl)
+    .map((l) => decorateTeacherEventForDisplay(l, session, slots));
+  return { allLogs, rawEvents, events, withAudio, slots };
+}
+
+async function runTeacherExport(session, { period, format }) {
+  const { events } = await loadTeacherPageEvents(session, true);
+  const ranged = filterLogsForExportPeriod(events, period);
+  const stamp = new Date().toISOString().slice(0, 10);
+  if (format === "csv") {
+    exportLogsToCsv(ranged, `teacher_noise_logs_${period}_${stamp}.csv`);
+    return;
+  }
+  generateWeeklyPdf(ranged, { role: "teacher", session, period });
 }
 
 function renderTeacherPolicyBanner() {
@@ -204,18 +241,13 @@ function renderAccessPolicyPage() {
 async function renderTeacherDashboard() {
   showLoading();
   try {
-    const allLogs = await loadNoiseEvents();
-    const rawEvents = await filterTeacherEvents(allLogs, teacherSession);
-    const events = await Promise.all(rawEvents.map((l) => decorateTeacherEventForDisplay(l, teacherSession)));
-    const rawWithAudio = await filterTeacherAudioLogs(allLogs, teacherSession);
-    const withAudio = await Promise.all(rawWithAudio.map((l) => decorateTeacherEventForDisplay(l, teacherSession)));
+    const { events, withAudio } = await loadTeacherPageEvents(teacherSession);
     const accessHours = getTeacherAccessHours();
 
     document.getElementById("page-content").innerHTML = `
       ${renderTeacherPolicyBanner()}
       <div style="margin:0.5rem 0;display:flex;gap:0.5rem;flex-wrap:wrap">
-        <button type="button" class="btn btn-secondary" id="teacher-export-monthly-pdf">Download monthly PDF</button>
-        <button type="button" class="btn btn-secondary" id="teacher-export-csv">Export monthly CSV</button>
+        <button type="button" class="btn btn-secondary" id="teacher-export-btn">Export report</button>
       </div>
       <div class="stats-grid">
         <div class="stat-card">
@@ -245,24 +277,12 @@ async function renderTeacherDashboard() {
       </div>
     `;
     bindTeacherAudioButtons(events);
-    const pdfBtn = document.getElementById('teacher-export-monthly-pdf');
-    if (pdfBtn) {
-      pdfBtn.addEventListener('click', async () => {
-        const all = await loadNoiseEvents();
-        generateWeeklyPdf(all, { role: 'teacher', session: teacherSession, monthly: true });
+    document.getElementById("teacher-export-btn")?.addEventListener("click", () => {
+      showExportModal({
+        title: "Export teacher report",
+        onExport: ({ period, format }) => runTeacherExport(teacherSession, { period, format }),
       });
-    }
-    const csvBtn = document.getElementById('teacher-export-csv');
-    if (csvBtn) {
-      csvBtn.addEventListener('click', async () => {
-        const all = await loadNoiseEvents();
-        const rawEvents = await filterTeacherEvents(all, teacherSession);
-        const events = await Promise.all(rawEvents.map((l) => decorateTeacherEventForDisplay(l, teacherSession)));
-        const monthlyLogs = filterLogsToMonthlyRange(events);
-        const monthKey = new Date().toISOString().slice(0, 7);
-        exportLogsToCsv(monthlyLogs, `teacher_noise_logs_${monthKey}.csv`);
-      });
-    }
+    });
   } catch (e) {
     showError(e.message);
   }
@@ -271,9 +291,7 @@ async function renderTeacherDashboard() {
 async function renderTeacherEvents() {
   showLoading();
   try {
-    const allLogs = await loadNoiseEvents();
-    const rawEvents = await filterTeacherEvents(allLogs, teacherSession);
-    const events = await Promise.all(rawEvents.map((l) => decorateTeacherEventForDisplay(l, teacherSession)));
+    const { events } = await loadTeacherPageEvents(teacherSession);
     let currentPage = 1;
     let filterFrom = teacherEventState.filterFrom;
     let filterTo = teacherEventState.filterTo;
@@ -421,7 +439,7 @@ async function renderTeacherSchedulePage() {
   }
 
   // Fetch schedule from DB
-  let scheduleSlots = await fetchTeacherSchedules(teacherSession.id);
+  let scheduleSlots = await getCachedTeacherSchedules(teacherSession.id);
   if (!scheduleSlots) scheduleSlots = [];
   let editingId = null; // client-side tracking index
 
@@ -550,9 +568,8 @@ async function renderTeacherSchedulePage() {
     }, 3000);
   }
 
-  async function renderSlotsList() {
-    // Refresh from DB
-    scheduleSlots = await fetchTeacherSchedules(teacherSession.id);
+  async function renderSlotsList(force = true) {
+    scheduleSlots = await getCachedTeacherSchedules(teacherSession.id, force);
     if (!scheduleSlots) scheduleSlots = [];
 
     const list = document.getElementById("schedule-slots-list");
@@ -631,6 +648,7 @@ async function renderTeacherSchedulePage() {
         if (slot && slot.id) {
           await removeTeacherScheduleSlot(slot.id);
         }
+        invalidateTeacherScheduleCache(teacherSession.id);
         scheduleSlots.splice(idx, 1);
         resetForm();
         await renderSlotsList();
@@ -725,6 +743,7 @@ async function renderTeacherSchedulePage() {
       });
     }
 
+    invalidateTeacherScheduleCache(teacherSession.id);
     resetForm();
     await renderSlotsList();
   });
@@ -739,8 +758,7 @@ async function renderTeacherSchedulePage() {
 async function renderTeacherAudio() {
   showLoading();
   try {
-    const allLogs = await loadNoiseEvents();
-    const clips = await filterTeacherAudioLogs(allLogs, teacherSession);
+    const { withAudio: clips } = await loadTeacherPageEvents(teacherSession);
     const accessHours = getTeacherAccessHours();
 
     document.getElementById("page-content").innerHTML = `
@@ -867,7 +885,9 @@ function shouldAutoRefreshTeacherRoute(route) {
 function initTeacherAutoRefresh() {
   if (teacherAutoRefreshInterval) clearInterval(teacherAutoRefreshInterval);
   teacherAutoRefreshInterval = setInterval(() => {
-    loadNoiseEvents(true).catch(() => {});
+    if (teacherSession) {
+      loadNoiseEventsForTeacher(teacherSession, true).catch(() => {});
+    }
   }, TEACHER_AUTO_REFRESH_INTERVAL);
 }
 

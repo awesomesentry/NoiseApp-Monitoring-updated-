@@ -1382,3 +1382,103 @@ a {
   color: var(--muted);
   margin-top: 0.15rem;
 }
+
+/* Loading indicators */
+.btn-spinner,
+.page-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin-loader 0.7s linear infinite;
+  vertical-align: middle;
+  margin-right: 0.35rem;
+}
+
+.page-spinner {
+  width: 22px;
+  height: 22px;
+  border-color: rgba(56, 189, 248, 0.25);
+  border-top-color: var(--accent);
+  margin-right: 0.5rem;
+}
+
+.btn.is-loading {
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+@keyframes spin-loader {
+  to { transform: rotate(360deg); }
+}
+
+.export-modal-panel,
+.confirm-modal-panel {
+  max-width: 420px;
+  width: calc(100% - 2rem);
+}
+
+.teacher-admin-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.teacher-admin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.teacher-admin-list li {
+  margin-bottom: 0.35rem;
+}
+
+.teacher-admin-list li.active .teacher-pick {
+  border-color: var(--accent);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.teacher-pick {
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.teacher-pick span {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+.checkbox-grid {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 180px;
+  overflow: auto;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 900px) {
+  .teacher-admin-grid {
+    grid-template-columns: 1fr;
+  }
+}

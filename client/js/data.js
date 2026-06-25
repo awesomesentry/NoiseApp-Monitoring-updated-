@@ -81,11 +81,34 @@ function mapNoiseEvent(row) {
   };
 }
 
-async function loadNoiseEvents(force = false) {
-  if (noiseEventsCache && !force) return noiseEventsCache;
-  const rows = await fetchNoiseEvents();
-  noiseEventsCache = rows.map(mapNoiseEvent);
-  return noiseEventsCache;
+async function loadNoiseEvents(force = false, options = {}) {
+  const hasOptions = options && Object.keys(options).length > 0;
+  if (!hasOptions && noiseEventsCache && !force) return noiseEventsCache;
+  const rows = await fetchNoiseEvents(options);
+  const mapped = rows.map(mapNoiseEvent);
+  if (!hasOptions) noiseEventsCache = mapped;
+  return mapped;
+}
+
+function getDefaultAdminNoiseEventOptions() {
+  const from = new Date();
+  from.setDate(from.getDate() - 30);
+  return { from: from.toISOString().slice(0, 10), limit: 1000 };
+}
+
+async function loadNoiseEventsForAdmin(force = false, extra = {}) {
+  return loadNoiseEvents(force, { ...getDefaultAdminNoiseEventOptions(), ...extra });
+}
+
+async function loadNoiseEventsForTeacher(session, force = false) {
+  const hours =
+    (typeof teacherSettings !== "undefined" ? teacherSettings.teacherAccessHours : 48) || 48;
+  const fromDate = new Date(Date.now() - hours * 60 * 60 * 1000);
+  return loadNoiseEvents(force, {
+    from: fromDate.toISOString().slice(0, 10),
+    severity: "red",
+    limit: 500,
+  });
 }
 
 async function loadClassrooms() {
@@ -312,7 +335,38 @@ function mapAuditRow(row) {
 
 function showLoading(containerId = "page-content") {
   const el = document.getElementById(containerId);
-  if (el) el.innerHTML = `<div class="empty-state">Loading from database…</div>`;
+  if (el) {
+    el.innerHTML = `<div class="empty-state"><span class="page-spinner"></span> Loading from database…</div>`;
+  }
+}
+
+function setButtonLoading(btn, loading, loadingText = "Please wait…") {
+  if (!btn) return;
+  if (loading) {
+    if (!btn.dataset.originalHtml) btn.dataset.originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.classList.add("is-loading");
+    btn.innerHTML = `<span class="btn-spinner"></span> ${loadingText}`;
+  } else {
+    btn.disabled = false;
+    btn.classList.remove("is-loading");
+    if (btn.dataset.originalHtml) btn.innerHTML = btn.dataset.originalHtml;
+  }
+}
+
+function setFormLoading(form, loading, submitBtn) {
+  const btn = submitBtn || form?.querySelector('button[type="submit"]');
+  if (loading) {
+    form?.querySelectorAll("input, button, select, textarea").forEach((el) => {
+      if (el !== btn) el.disabled = true;
+    });
+    setButtonLoading(btn, true, "Signing in…");
+  } else {
+    form?.querySelectorAll("input, button, select, textarea").forEach((el) => {
+      el.disabled = false;
+    });
+    setButtonLoading(btn, false);
+  }
 }
 
 function showError(message) {
@@ -501,8 +555,127 @@ function filterLogsToMonthlyRange(logs) {
   });
 }
 
+function filterLogsToDailyRange(logs, dateStr) {
+  const day = dateStr || new Date().toISOString().slice(0, 10);
+  return logs.filter((l) => l.date === day);
+}
+
+function filterLogsToWeeklyRange(logs, days = 7) {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date();
+  start.setDate(start.getDate() - (days - 1));
+  start.setHours(0, 0, 0, 0);
+  return logs.filter((l) => {
+    const d = new Date(l.datetime);
+    return d >= start && d <= end;
+  });
+}
+
+function filterLogsForExportPeriod(logs, period) {
+  if (period === "daily") return filterLogsToDailyRange(logs);
+  if (period === "weekly") return filterLogsToWeeklyRange(logs, 7);
+  return filterLogsToMonthlyRange(logs);
+}
+
+function getExportPeriodLabel(period) {
+  if (period === "daily") return "Today";
+  if (period === "weekly") return "Last 7 days";
+  return "This month (Mon–Sat)";
+}
+
+function showConfirmModal({ title, message, confirmText = "Confirm", cancelText = "Cancel", danger = false }) {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.className = "audio-modal-backdrop confirm-modal-backdrop";
+    backdrop.innerHTML = `
+      <div class="panel audio-modal-panel confirm-modal-panel">
+        <h3 style="margin-top:0">${title}</h3>
+        <p style="font-size:0.9rem;color:var(--muted);margin:1rem 0">${message}</p>
+        <div style="display:flex;gap:0.75rem;justify-content:flex-end">
+          <button type="button" class="btn btn-secondary btn-sm" id="confirm-modal-cancel">${cancelText}</button>
+          <button type="button" class="btn btn-sm ${danger ? "btn-danger" : "btn-primary"}" id="confirm-modal-ok">${confirmText}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+    const cleanup = (result) => {
+      backdrop.remove();
+      resolve(result);
+    };
+    backdrop.querySelector("#confirm-modal-cancel").addEventListener("click", () => cleanup(false));
+    backdrop.querySelector("#confirm-modal-ok").addEventListener("click", () => cleanup(true));
+    backdrop.addEventListener("click", (ev) => {
+      if (ev.target === backdrop) cleanup(false);
+    });
+  });
+}
+
+async function adminDeleteNoiseEvent(id, detail = "") {
+  await deleteNoiseEvent(id);
+  noiseEventsCache = null;
+  if (typeof logAdminAudit === "function") {
+    await logAdminAudit("Deleted noise event", detail || `Removed event ${id}`);
+  }
+}
+
+function showExportModal({ title = "Export report", onExport }) {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.className = "audio-modal-backdrop export-modal-backdrop";
+    backdrop.innerHTML = `
+      <div class="panel audio-modal-panel export-modal-panel">
+        <h3 style="margin-top:0">${title}</h3>
+        <p style="font-size:0.85rem;color:var(--muted);margin:0 0 1rem">Choose a time range and format.</p>
+        <div class="form-group">
+          <label for="export-period">Time range</label>
+          <select id="export-period">
+            <option value="daily">Daily (today)</option>
+            <option value="weekly">Weekly (last 7 days)</option>
+            <option value="monthly" selected>Monthly (Mon–Sat this month)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="export-format">Format</label>
+          <select id="export-format">
+            <option value="pdf">PDF report</option>
+            <option value="csv">CSV spreadsheet</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:0.75rem;justify-content:flex-end;margin-top:1.25rem">
+          <button type="button" class="btn btn-secondary btn-sm" id="export-modal-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary btn-sm" id="export-modal-ok">Export</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+
+    function cleanup(result) {
+      backdrop.remove();
+      resolve(result);
+    }
+
+    backdrop.querySelector("#export-modal-cancel").addEventListener("click", () => cleanup(null));
+    backdrop.addEventListener("click", (ev) => {
+      if (ev.target === backdrop) cleanup(null);
+    });
+    backdrop.querySelector("#export-modal-ok").addEventListener("click", async () => {
+      const period = backdrop.querySelector("#export-period").value;
+      const format = backdrop.querySelector("#export-format").value;
+      const okBtn = backdrop.querySelector("#export-modal-ok");
+      setButtonLoading(okBtn, true, "Exporting…");
+      try {
+        await onExport({ period, format });
+        cleanup({ period, format });
+      } catch (e) {
+        alert("Export failed: " + e.message);
+        setButtonLoading(okBtn, false);
+      }
+    });
+  });
+}
+
 async function generateWeeklyPdf(logs, options = {}) {
-  const { role = 'admin', session = null, days = 7, monthly = false } = options;
+  const { role = "admin", session = null, days = 7, monthly = false, period = null } = options;
+  const exportPeriod = period || (monthly ? "monthly" : "weekly");
   try {
     await _ensurePdfLibraries();
   } catch (e) {
@@ -564,23 +737,34 @@ async function generateWeeklyPdf(logs, options = {}) {
   let reportTitle;
   let filename;
 
-  if (monthly) {
+  if (exportPeriod === "daily") {
+    const today = new Date().toISOString().slice(0, 10);
+    dates = [today];
+    reportTitle =
+      role === "teacher"
+        ? `Daily noise incidents — ${session?.name || session?.username || "Teacher"}`
+        : "Daily noise incidents — All rooms";
+    periodLabel = `Date: ${today}`;
+    filename = `daily_report_${today}.pdf`;
+  } else if (exportPeriod === "monthly" || monthly) {
     dates = getMonthlyDateStrings();
     const { start } = getMonthlyMondayToSaturdayRange();
-    const monthName = start.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-    reportTitle = role === 'teacher'
-      ? `Monthly noise incidents — ${session?.name || session?.username || 'Teacher'}`
-      : 'Monthly noise incidents — All teachers';
+    const monthName = start.toLocaleString("en-US", { month: "long", year: "numeric" });
+    reportTitle =
+      role === "teacher"
+        ? `Monthly noise incidents — ${session?.name || session?.username || "Teacher"}`
+        : "Monthly noise incidents — All teachers";
     periodLabel = `Month: ${monthName} (Monday — Saturday)`;
     filename = `monthly_report_${start.toISOString().slice(0, 7)}.pdf`;
   } else {
     const result = getTeacherWeeklyEvents(filteredLogs, days);
     dates = result.dates;
-    reportTitle = role === 'teacher'
-      ? `Weekly noise incidents — ${session?.name || session?.username || 'Teacher'}`
-      : 'Weekly noise incidents — All teachers';
+    reportTitle =
+      role === "teacher"
+        ? `Weekly noise incidents — ${session?.name || session?.username || "Teacher"}`
+        : "Weekly noise incidents — All teachers";
     periodLabel = `Week: ${dates[0]} — ${dates[dates.length - 1]}`;
-    filename = `weekly_report_${new Date().toISOString().slice(0,10)}.pdf`;
+    filename = `weekly_report_${new Date().toISOString().slice(0, 10)}.pdf`;
   }
 
   const weeklyCounts = dates.map((date) =>
