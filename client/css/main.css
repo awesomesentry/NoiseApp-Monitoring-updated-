@@ -1482,3 +1482,30 @@ a {
     grid-template-columns: 1fr;
   }
 }
+
+.password-field {
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
+}
+
+.password-field input {
+  flex: 1;
+  min-width: 0;
+}
+
+.password-toggle {
+  flex-shrink: 0;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.password-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}

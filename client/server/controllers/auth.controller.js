@@ -37,4 +37,16 @@ const me = asyncHandler(async (req, res) => {
   res.json({ user: req.user, profile: req.profile });
 });
 
-module.exports = { login, signup, logout, me };
+const updatePassword = asyncHandler(async (req, res) => {
+  const { password } = req.body || {};
+  if (!req.accessToken) {
+    return res.status(401).json({ error: "Not authenticated" });
+  }
+  if (!password || String(password).length < 6) {
+    return res.status(400).json({ error: "Password must be at least 6 characters" });
+  }
+  await supabase.updateUserPassword(req.accessToken, String(password));
+  res.json({ ok: true });
+});
+
+module.exports = { login, signup, logout, me, updatePassword };

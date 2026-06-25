@@ -14,6 +14,7 @@ const TEACHER_ROUTES = {
   events: { title: "RED Events", keyword: "Your classroom & subject reports only" },
   schedule: { title: "My Schedule", keyword: "Customize your class schedule & subjects" },
   audio: { title: "Audio Clips", keyword: "Read-only · 3–5 seconds" },
+  profile: { title: "My Profile", keyword: "Name, room/device, and password" },
   policy: { title: "Access Policy", keyword: "Controlled teacher access model" },
 };
 
@@ -574,6 +575,7 @@ async function renderTeacherSchedulePage() {
 
     const list = document.getElementById("schedule-slots-list");
     const empty = document.getElementById("no-slots-msg");
+    if (!list || !empty) return;
 
     if (scheduleSlots.length === 0) {
       list.innerHTML = "";
@@ -841,11 +843,131 @@ async function playTeacherAudio(logId, logs) {
   console.info("[AUDIT] Teacher audio", teacherSession?.username, logId, now);
 }
 
+async function renderTeacherProfile() {
+  showLoading();
+  try {
+    teacherSession = await syncTeacherSessionFromDb(teacherSession);
+    sessionStorage.setItem(TEACHER_SESSION_KEY, JSON.stringify(teacherSession));
+
+    const primaryRoom =
+      teacherSession.deviceIds?.[0] ||
+      teacherSession.assignedRooms?.[0] ||
+      "";
+
+    document.getElementById("page-content").innerHTML = `
+      <div class="policy-banner">
+        <strong>Your profile</strong>
+        Update your display name and linked room/device ID. Room and device use the same identifier for noise event matching.
+      </div>
+      <div class="panel">
+        <h3>Account details</h3>
+        <div class="form-group">
+          <label for="profile-email">Email</label>
+          <input type="email" id="profile-email" value="${teacherSession.email || ""}" disabled />
+        </div>
+        <div class="form-group">
+          <label for="profile-name">Full name</label>
+          <input type="text" id="profile-name" value="${teacherSession.name || ""}" required />
+        </div>
+        <div class="form-group">
+          <label for="profile-room">Room / device ID</label>
+          <input type="text" id="profile-room" value="${primaryRoom}" placeholder="e.g. esp32_noise_01" />
+          <p style="font-size:0.75rem;color:var(--muted);margin:0.35rem 0 0">
+            This updates your schedule slots and session so RED events match this device.
+          </p>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm" id="profile-save-btn">Save profile</button>
+        <p class="success-msg hidden" id="profile-save-ok">Profile saved.</p>
+        <p class="error-msg hidden" id="profile-save-err"></p>
+      </div>
+      <div class="panel">
+        <h3>Change password</h3>
+        <div class="form-group">
+          <label for="profile-new-password">New password</label>
+          <div class="password-field">
+            <input type="password" id="profile-new-password" minlength="6" autocomplete="new-password" />
+            <button type="button" class="password-toggle" data-password-toggle="profile-new-password">Show</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="profile-confirm-password">Confirm new password</label>
+          <div class="password-field">
+            <input type="password" id="profile-confirm-password" minlength="6" autocomplete="new-password" />
+            <button type="button" class="password-toggle" data-password-toggle="profile-confirm-password">Show</button>
+          </div>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" id="profile-password-btn">Update password</button>
+        <p class="error-msg hidden" id="profile-password-err"></p>
+      </div>
+    `;
+
+    initPasswordToggles(document.getElementById("page-content"));
+
+    document.getElementById("profile-save-btn").addEventListener("click", async (ev) => {
+      const btn = ev.currentTarget;
+      const okEl = document.getElementById("profile-save-ok");
+      const errEl = document.getElementById("profile-save-err");
+      okEl.classList.add("hidden");
+      errEl.classList.add("hidden");
+      setButtonLoading(btn, true, "Saving…");
+      try {
+        const name = document.getElementById("profile-name").value.trim();
+        const room = document.getElementById("profile-room").value.trim();
+        await saveTeacherProfileSettings(teacherSession.id, { name, roomDeviceId: room });
+        teacherSession = await syncTeacherSessionFromDb(getTeacherSession());
+        sessionStorage.setItem(TEACHER_SESSION_KEY, JSON.stringify(teacherSession));
+        document.getElementById("sidebar-user").textContent = teacherSession.name;
+        document.getElementById("sidebar-rooms").textContent = teacherAssignmentLabel(teacherSession);
+        okEl.classList.remove("hidden");
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.classList.remove("hidden");
+      } finally {
+        setButtonLoading(btn, false);
+      }
+    });
+
+    document.getElementById("profile-password-btn").addEventListener("click", async (ev) => {
+      const btn = ev.currentTarget;
+      const errEl = document.getElementById("profile-password-err");
+      errEl.classList.add("hidden");
+      const pw = document.getElementById("profile-new-password").value;
+      const confirm = document.getElementById("profile-confirm-password").value;
+      if (pw.length < 6) {
+        errEl.textContent = "Password must be at least 6 characters.";
+        errEl.classList.remove("hidden");
+        return;
+      }
+      if (pw !== confirm) {
+        errEl.textContent = "Passwords do not match.";
+        errEl.classList.remove("hidden");
+        return;
+      }
+      setButtonLoading(btn, true, "Updating…");
+      try {
+        await updateUserPassword(pw);
+        document.getElementById("profile-new-password").value = "";
+        document.getElementById("profile-confirm-password").value = "";
+        await logTeacherAudit("Password changed", `${teacherSession.email} updated password`);
+        alert("Password updated successfully.");
+      } catch (e) {
+        errEl.textContent = e.message;
+        errEl.classList.remove("hidden");
+      } finally {
+        setButtonLoading(btn, false);
+      }
+    });
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
 const TEACHER_RENDERERS = {
   dashboard: renderTeacherDashboard,
   events: renderTeacherEvents,
   schedule: renderTeacherSchedulePage,
   audio: renderTeacherAudio,
+  profile: renderTeacherProfile,
   policy: renderAccessPolicyPage,
 };
 

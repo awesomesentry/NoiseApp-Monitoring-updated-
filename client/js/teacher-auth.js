@@ -22,6 +22,10 @@ async function loginTeacher(email, password) {
 
     // Only teachers can sign in via teacher portal
     if (profile.role !== "teacher") {
+      clearAuthToken();
+      if (profile.role === "admin") {
+        return { error: "admin_account", message: "This account is an administrator. Please use the Admin Dashboard to sign in." };
+      }
       return null;
     }
 
@@ -222,6 +226,38 @@ async function removeTeacherScheduleSlot(slotId) {
 // ─── Profile update ───
 async function updateTeacherProfile(teacherId, updates) {
   return upsertProfile(teacherId, updates);
+}
+
+async function saveTeacherProfileSettings(teacherId, { name, roomDeviceId }) {
+  if (name) {
+    await upsertProfile(teacherId, { full_name: name, role: "teacher" });
+  }
+  if (roomDeviceId) {
+    const slots = await getCachedTeacherSchedules(teacherId, true);
+    if (!slots || slots.length === 0) {
+      await addTeacherScheduleSlot(teacherId, {
+        day: "Monday",
+        startTime: "08:00",
+        endTime: "17:00",
+        subject: null,
+        room: roomDeviceId,
+      });
+    } else {
+      for (const slot of slots) {
+        if (!slot.id) continue;
+        await upsertTeacherSchedule({
+          id: slot.id,
+          teacher_id: teacherId,
+          day: slot.day,
+          start_time: slot.start_time || slot.startTime,
+          end_time: slot.end_time || slot.endTime,
+          subject: slot.subject || null,
+          room: roomDeviceId,
+        });
+      }
+    }
+    invalidateTeacherScheduleCache(teacherId);
+  }
 }
 
 // ─── Sync session with latest data from DB ───

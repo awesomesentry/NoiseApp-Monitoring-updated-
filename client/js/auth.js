@@ -24,6 +24,16 @@ async function login(email, password) {
       profile = await getProfileById(user.id);
     }
 
+    // Only administrators may use the admin dashboard
+    if (profile?.role === "teacher") {
+      clearAuthToken();
+      return { error: "teacher_account", message: "This account is a teacher. Please use the Teacher Portal to sign in." };
+    }
+    if (profile?.role !== "admin") {
+      clearAuthToken();
+      return null;
+    }
+
     // Build session
     const session = {
       id: user.id,

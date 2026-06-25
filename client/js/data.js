@@ -369,6 +369,136 @@ function setFormLoading(form, loading, submitBtn) {
   }
 }
 
+function initPasswordToggles(root = document) {
+  root.querySelectorAll("[data-password-toggle]").forEach((btn) => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => {
+      const input = document.getElementById(btn.dataset.passwordToggle);
+      if (!input) return;
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      btn.textContent = show ? "Hide" : "Show";
+      btn.setAttribute("aria-label", show ? "Hide password" : "Show password");
+    });
+  });
+}
+
+function formatManilaDateTime(isoOrDate) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: MANILA_TZ,
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(isoOrDate));
+}
+
+function formatHourLabel(hour24) {
+  const period = hour24 >= 12 ? "PM" : "AM";
+  const h12 = hour24 % 12 || 12;
+  return `${h12} ${period}`;
+}
+
+function getExportPeriodMeta(period) {
+  const now = new Date();
+  const today = getManilaDateParts(now);
+
+  if (period === "daily") {
+    return {
+      startDate: today.date,
+      endDate: today.date,
+      startTime: "12:00 AM",
+      endTime: "11:59 PM",
+      filterLabel: `Filter: ${today.date} 12:00 AM – 11:59 PM (Manila)`,
+      filename: `daily_report_${today.date}.pdf`,
+      titleSuffix: "Daily noise incidents",
+    };
+  }
+
+  if (period === "weekly") {
+    const endParts = today;
+    const start = new Date(now);
+    start.setDate(start.getDate() - 6);
+    const startParts = getManilaDateParts(start);
+    return {
+      startDate: startParts.date,
+      endDate: endParts.date,
+      startTime: "12:00 AM",
+      endTime: "11:59 PM",
+      filterLabel: `Filter: ${startParts.date} 12:00 AM – ${endParts.date} 11:59 PM (Manila)`,
+      filename: `weekly_report_${endParts.date}.pdf`,
+      titleSuffix: "Weekly noise incidents",
+    };
+  }
+
+  const { start } = getMonthlyMondayToSaturdayRange();
+  const monthName = start.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+  const dates = getMonthlyDateStrings();
+  return {
+    startDate: dates[0],
+    endDate: dates[dates.length - 1],
+    startTime: "12:00 AM",
+    endTime: "11:59 PM",
+    filterLabel: `Filter: ${dates[0]} 12:00 AM – ${dates[dates.length - 1]} 11:59 PM (Manila) · ${monthName}`,
+    filename: `monthly_report_${start.toISOString().slice(0, 7)}.pdf`,
+    titleSuffix: "Monthly noise incidents",
+  };
+}
+
+function getPdfCategoryLabel(log) {
+  if (log.subject && log.subject !== "—") return log.subject;
+  if (log.room && log.room !== "—") return log.room;
+  if (log.deviceId) return log.deviceId;
+  return "Unassigned";
+}
+
+function buildPdfTimeSeries(logs, period) {
+  const incidents = logs.filter(isIncident);
+  if (period === "daily") {
+    const day = incidents[0]?.date || getManilaDateParts(new Date()).date;
+    const dayLogs = incidents.filter((l) => l.date === day);
+    const hours = [];
+    const counts = [];
+    for (let h = 6; h <= 21; h++) {
+      hours.push(formatHourLabel(h));
+      counts.push(
+        dayLogs.filter((l) => getManilaDateParts(l.datetime).hour === h).length
+      );
+    }
+    return { labels: hours, counts, chartTitle: "Incidents by hour (Manila time)" };
+  }
+
+  const dateMap = new Map();
+  incidents.forEach((l) => {
+    dateMap.set(l.date, (dateMap.get(l.date) || 0) + 1);
+  });
+  const sortedDates = [...dateMap.keys()].sort();
+  if (sortedDates.length === 0) {
+    const meta = getExportPeriodMeta(period);
+    return {
+      labels: [meta.startDate],
+      counts: [0],
+      chartTitle: period === "weekly" ? "Incidents by day" : "Incidents by day (month)",
+    };
+  }
+  return {
+    labels: sortedDates,
+    counts: sortedDates.map((d) => dateMap.get(d)),
+    chartTitle: period === "weekly" ? "Incidents by day (7 days)" : "Incidents by day (month)",
+  };
+}
+
+function buildPdfRoomBreakdown(logs) {
+  const map = new Map();
+  logs.filter(isIncident).forEach((l) => {
+    const key = getPdfCategoryLabel(l);
+    map.set(key, (map.get(key) || 0) + 1);
+  });
+  return [...map.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+}
+
 function showError(message) {
   document.getElementById("page-content").innerHTML = `
     <div class="empty-state" style="color:var(--red)">
@@ -674,157 +804,203 @@ function showExportModal({ title = "Export report", onExport }) {
 }
 
 async function generateWeeklyPdf(logs, options = {}) {
-  const { role = "admin", session = null, days = 7, monthly = false, period = null } = options;
+  const { role = "admin", session = null, period = null, monthly = false } = options;
   const exportPeriod = period || (monthly ? "monthly" : "weekly");
   try {
     await _ensurePdfLibraries();
   } catch (e) {
-    alert('Failed to load PDF libraries: ' + e.message);
+    alert("Failed to load PDF libraries: " + e.message);
     return;
   }
 
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
   const margin = 14;
   const pageWidth = doc.internal.pageSize.getWidth();
+  const periodMeta = getExportPeriodMeta(exportPeriod);
 
-  async function renderChartImage(labels, data, title, width = 900, height = 250, horizontal = false) {
-    if (typeof Chart === 'undefined') {
+  const reportLogs = logs.filter(isIncident);
+  const redCount = reportLogs.filter(
+    (l) => l.status === "red" || (l.warningColor || "").toUpperCase() === "RED"
+  ).length;
+
+  async function renderLineChartImage(labels, data, title, width = 920, height = 280) {
+    if (typeof Chart === "undefined") {
       try {
-        await _loadScriptOnce('https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js');
-      } catch (e) {
+        await _loadScriptOnce("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js");
+      } catch {
         return null;
       }
     }
-    const canvas = document.createElement('canvas');
+    const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    canvas.style.position = 'fixed';
-    canvas.style.left = '-9999px';
+    canvas.style.position = "fixed";
+    canvas.style.left = "-9999px";
     document.body.appendChild(canvas);
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
     const chart = new Chart(ctx, {
-      type: 'bar',
+      type: "line",
       data: {
         labels,
-        datasets: [{ label: title || 'Incidents', data, backgroundColor: 'rgba(54, 162, 235, 0.7)' }]
+        datasets: [
+          {
+            label: title,
+            data,
+            borderColor: "#38bdf8",
+            backgroundColor: "rgba(56, 189, 248, 0.18)",
+            fill: true,
+            tension: 0.35,
+            pointRadius: 4,
+            pointBackgroundColor: "#38bdf8",
+            borderWidth: 2,
+          },
+        ],
       },
       options: {
-        indexAxis: horizontal ? 'y' : 'x',
         responsive: false,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        plugins: {
+          legend: { display: true, labels: { color: "#334155", boxWidth: 12 } },
+          title: { display: !!title, text: title, color: "#334155", font: { size: 14 } },
+        },
         scales: {
-          x: { grid: { display: false }, ticks: { maxRotation: 45, minRotation: 0 } },
-          y: { grid: { color: '#eeeeee' } }
-        }
-      }
+          x: {
+            grid: { color: "rgba(148,163,184,0.25)" },
+            ticks: { color: "#475569", maxRotation: 45, minRotation: 0, font: { size: 10 } },
+          },
+          y: {
+            beginAtZero: true,
+            grid: { color: "rgba(148,163,184,0.25)" },
+            ticks: { color: "#475569", precision: 0 },
+          },
+        },
+      },
     });
-    await new Promise((r) => setTimeout(r, 50));
-    const img = canvas.toDataURL('image/png');
-    try { chart.destroy(); } catch (_) {}
+    await new Promise((r) => setTimeout(r, 120));
+    const img = canvas.toDataURL("image/png");
+    try {
+      chart.destroy();
+    } catch (_) {}
     canvas.remove();
     return img;
   }
 
-  const filteredLogs =
-    role === 'teacher' && session
-      ? logs.filter((l) => (session.deviceIds?.includes(l.deviceId) || session.name === l.teacher || session.username === l.teacher))
-      : logs;
-
-  let dates;
-  let periodLabel;
-  let reportTitle;
-  let filename;
-
-  if (exportPeriod === "daily") {
-    const today = new Date().toISOString().slice(0, 10);
-    dates = [today];
-    reportTitle =
-      role === "teacher"
-        ? `Daily noise incidents — ${session?.name || session?.username || "Teacher"}`
-        : "Daily noise incidents — All rooms";
-    periodLabel = `Date: ${today}`;
-    filename = `daily_report_${today}.pdf`;
-  } else if (exportPeriod === "monthly" || monthly) {
-    dates = getMonthlyDateStrings();
-    const { start } = getMonthlyMondayToSaturdayRange();
-    const monthName = start.toLocaleString("en-US", { month: "long", year: "numeric" });
-    reportTitle =
-      role === "teacher"
-        ? `Monthly noise incidents — ${session?.name || session?.username || "Teacher"}`
-        : "Monthly noise incidents — All teachers";
-    periodLabel = `Month: ${monthName} (Monday — Saturday)`;
-    filename = `monthly_report_${start.toISOString().slice(0, 7)}.pdf`;
-  } else {
-    const result = getTeacherWeeklyEvents(filteredLogs, days);
-    dates = result.dates;
-    reportTitle =
-      role === "teacher"
-        ? `Weekly noise incidents — ${session?.name || session?.username || "Teacher"}`
-        : "Weekly noise incidents — All teachers";
-    periodLabel = `Week: ${dates[0]} — ${dates[dates.length - 1]}`;
-    filename = `weekly_report_${new Date().toISOString().slice(0, 10)}.pdf`;
+  async function renderBarChartImage(labels, data, title, horizontal = true) {
+    if (typeof Chart === "undefined") {
+      try {
+        await _loadScriptOnce("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js");
+      } catch {
+        return null;
+      }
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = 920;
+    canvas.height = horizontal ? Math.max(220, labels.length * 36) : 260;
+    canvas.style.position = "fixed";
+    canvas.style.left = "-9999px";
+    document.body.appendChild(canvas);
+    const ctx = canvas.getContext("2d");
+    const chart = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: title,
+            data,
+            backgroundColor: "rgba(239, 68, 68, 0.75)",
+            borderRadius: 4,
+          },
+        ],
+      },
+      options: {
+        indexAxis: horizontal ? "y" : "x",
+        responsive: false,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          title: { display: !!title, text: title, color: "#334155", font: { size: 14 } },
+        },
+        scales: {
+          x: { beginAtZero: true, grid: { color: "rgba(148,163,184,0.2)" }, ticks: { precision: 0 } },
+          y: { grid: { display: false }, ticks: { color: "#475569", font: { size: 11 } } },
+        },
+      },
+    });
+    await new Promise((r) => setTimeout(r, 120));
+    const img = canvas.toDataURL("image/png");
+    try {
+      chart.destroy();
+    } catch (_) {}
+    canvas.remove();
+    return img;
   }
 
-  const weeklyCounts = dates.map((date) =>
-    filteredLogs.filter((l) => l.date === date && isIncident(l)).length
-  );
+  const who =
+    role === "teacher"
+      ? session?.name || session?.username || "Teacher"
+      : "All rooms";
+  const reportTitle = `${periodMeta.titleSuffix} — ${who}`;
+  const timeSeries = buildPdfTimeSeries(reportLogs, exportPeriod);
+  const roomBreakdown = buildPdfRoomBreakdown(reportLogs);
 
-  const subjectMap = new Map();
-  filteredLogs.forEach((l) => {
-    if (!isIncident(l)) return;
-    const d = new Date(l.datetime);
-    const start = new Date(dates[0]);
-    const end = new Date(dates[dates.length - 1]);
-    end.setHours(23, 59, 59, 999);
-    if (d < start || d > end) return;
-    const subj = l.subject && l.subject !== '—' ? l.subject : 'Unknown';
-    if (!subjectMap.has(subj)) {
-      subjectMap.set(subj, { count: 0 });
-    }
-    subjectMap.get(subj).count += 1;
-  });
-
-  const subjects = [...subjectMap.entries()]
-    .map(([name, { count }]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
-
+  let y = 18;
   doc.setFontSize(16);
-  doc.text(reportTitle, margin, 18);
+  doc.text(reportTitle, margin, y);
+  y += 8;
   doc.setFontSize(10);
-  doc.text(`Generated: ${new Date().toLocaleString()}`, margin, 24);
-  doc.setFontSize(11);
-  doc.text(periodLabel, margin, 30);
+  doc.setTextColor(80, 80, 80);
+  doc.text(periodMeta.filterLabel, margin, y);
+  y += 5;
+  doc.text(`Downloaded: ${formatManilaDateTime(new Date())} (Manila)`, margin, y);
+  y += 5;
+  doc.text(
+    `Summary: ${reportLogs.length} incident(s) · ${redCount} RED · ${roomBreakdown.length} room/device(s)`,
+    margin,
+    y
+  );
+  doc.setTextColor(0, 0, 0);
+  y += 10;
 
-  const firstChartY = 38;
-  const secondChartY = 110;
-
-  const weeklyChartImg = await renderChartImage(dates, weeklyCounts, monthly ? 'Incidents per day' : 'Incidents per day (last 7 days)');
-  if (weeklyChartImg) {
-    const imgWidthMm = pageWidth - margin * 2;
-    const imgHeightMm = 60;
-    doc.addImage(weeklyChartImg, 'PNG', margin, firstChartY, imgWidthMm, imgHeightMm);
+  const lineImg = await renderLineChartImage(
+    timeSeries.labels,
+    timeSeries.counts,
+    timeSeries.chartTitle
+  );
+  if (lineImg) {
+    doc.addImage(lineImg, "PNG", margin, y, pageWidth - margin * 2, 72);
+    y += 78;
   }
 
-  if (subjects.length > 0) {
-    const subjectChartImg = await renderChartImage(
-      subjects.map((s) => s.name),
-      subjects.map((s) => s.count),
-      'Subject comparison — incidents',
-      900,
-      180,
-      true
+  if (roomBreakdown.length > 0) {
+    const barImg = await renderBarChartImage(
+      roomBreakdown.map((r) => r.name),
+      roomBreakdown.map((r) => r.count),
+      "Incidents by room / device / subject"
     );
-    if (subjectChartImg) {
-      const imgWidthMm = pageWidth - margin * 2;
-      const imgHeightMm = 60;
-      doc.addImage(subjectChartImg, 'PNG', margin, secondChartY, imgWidthMm, imgHeightMm);
+    if (barImg) {
+      const barHeight = Math.min(90, 24 + roomBreakdown.length * 10);
+      doc.addImage(barImg, "PNG", margin, y, pageWidth - margin * 2, barHeight);
+      y += barHeight + 6;
     }
-  } else {
-    doc.setFontSize(10);
-    doc.text('No subject comparison data available for this period.', margin, secondChartY + 10);
   }
 
-  doc.save(filename);
+  if (reportLogs.length > 0 && y < 250) {
+    doc.setFontSize(11);
+    doc.text("Recent events in filter range", margin, y);
+    y += 6;
+    doc.setFontSize(9);
+    reportLogs.slice(0, 12).forEach((l) => {
+      if (y > 280) return;
+      doc.text(
+        `${l.date} ${l.time} · ${l.room || l.deviceId} · ${l.db} dB · ${l.warningLevel || l.status}`,
+        margin,
+        y
+      );
+      y += 5;
+    });
+  }
+
+  doc.save(periodMeta.filename);
 }

@@ -105,6 +105,13 @@ async function signOutUser(token) {
   return true;
 }
 
+async function updateUserPassword(password) {
+  return apiRequest("/auth/password", {
+    method: "PATCH",
+    body: JSON.stringify({ password }),
+  });
+}
+
 async function getUser(token) {
   try {
     const data = await apiRequest("/auth/me", {

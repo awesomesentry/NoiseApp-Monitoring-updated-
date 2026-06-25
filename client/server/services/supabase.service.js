@@ -142,6 +142,25 @@ async function getUser(token) {
   return res.json();
 }
 
+async function updateUserPassword(token, password) {
+  const res = await fetch(`${AUTH_URL}/user`, {
+    method: "PUT",
+    headers: {
+      apikey: env.supabaseAnonKey,
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.msg || data.error_description || data.message || "Password update failed");
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
 async function getProfileById(id, userToken) {
   const list = await get(TABLES.profiles, `id=eq.${id}&select=*`, userToken);
   return list.length ? list[0] : null;
@@ -197,6 +216,7 @@ module.exports = {
   signIn,
   signOut,
   getUser,
+  updateUserPassword,
   getProfileById,
   upsertProfile,
   fetchTeacherClassrooms,
