@@ -1,0 +1,18 @@
+# Environment variables (contains secrets)
+.env
+
+# Generated config (populated by build script)
+js/config.js
+
+# Node.js dependencies
+node_modules/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Teacher Login — Smart Classroom Noise Monitor</title>
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card">
+      <div class="traffic-dots">
+        <span class="g" title="Green"></span>
+        <span class="y" title="Yellow"></span>
+        <span class="r" title="Red"></span>
+      </div>
+      <h1>Teacher Portal</h1>
+      <p class="subtitle">Sign in to view RED-level events for your assigned classroom</p>
+      <form id="login-form">
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" autocomplete="username" required />
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" autocomplete="current-password" required />
+        </div>
+        <p class="error-msg" id="login-error">Invalid email or password.</p>
+        <button type="submit" class="btn btn-primary">Sign in</button>
+      </form>
+      <p class="login-footer-link">
+        No account? <a href="teacher-signup.html">Create teacher account</a>
+      </p>
+      <p class="login-footer-link" style="margin-top:1rem">
+        <a href="index.html">Admin login</a>
+      </p>
+    </div>
+  </div>
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/teacher-auth.js"></script>
+  <script>
+    if (getTeacherSession()) window.location.href = "teacher-app.html";
+    document.getElementById("login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const err = document.getElementById("login-error");
+      err.classList.remove("visible");
+      const email = document.getElementById("email").value;
+      const pass = document.getElementById("password").value;
+      const session = await loginTeacher(email, pass);
+      if (session) {
+        await new Promise(r => setTimeout(r, 200));
+        window.location.href = "teacher-app.html";
+      } else {
+        err.classList.add("visible");
+      }
+    });
+  </script>
+</body>
+</html>

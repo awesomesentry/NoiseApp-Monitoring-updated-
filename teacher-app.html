@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Teacher Portal — Smart Classroom Noise Monitor</title>
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+  <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+  <div class="app-shell">
+    <aside class="sidebar sidebar-teacher" id="sidebar">
+      <div class="sidebar-brand">
+        <h2>Teacher Portal</h2>
+        <p>Controlled classroom access</p>
+      </div>
+      <ul class="nav-links" id="nav-links">
+        <li><a href="#dashboard" data-route="dashboard"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16M4 15h8M4 11h12M4 7h6"/></svg></span> <span>Overview</span></a></li>
+        <li><a href="#events" data-route="events"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M12 4h9"/><path d="M4 8h16"/><path d="M4 16h16"/></svg></span> <span>RED Events</span></a></li>
+        <li><a href="#schedule" data-route="schedule"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg></span> <span>My Schedule</span></a></li>
+        <li><a href="#audio" data-route="audio"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></span> <span>Audio Clips</span></a></li>
+        <li><a href="#policy" data-route="policy"><span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 2v4"/><path d="M16 2v4"/><path d="M4 10h16"/></svg></span> <span>Access Policy</span></a></li>
+      </ul>
+      <div class="sidebar-footer">
+        <div class="user-name" id="sidebar-user">—</div>
+        <span class="role-badge teacher">teacher</span>
+        <div class="detail" id="sidebar-rooms" style="margin-top:0.5rem"></div>
+        <button type="button" class="btn btn-secondary btn-sm" style="margin-top:0.75rem;width:100%" id="btn-logout">Sign out</button>
+      </div>
+    </aside>
+    <div class="main-content">
+      <header class="topbar">
+        <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar">
+          <span class="menu-toggle-bar"></span>
+          <span class="menu-toggle-bar"></span>
+          <span class="menu-toggle-bar"></span>
+        </button>
+        <div class="topbar-titles">
+          <h1 id="page-title">Overview</h1>
+          <div class="keyword" id="page-keyword">Your assigned classroom</div>
+        </div>
+        
+      </header>
+      <main class="page-body" id="page-content"></main>
+    </div>
+  </div>
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/teacher-auth.js"></script>
+  <script src="js/teacher-app.js"></script>
+</body>
+</html>
