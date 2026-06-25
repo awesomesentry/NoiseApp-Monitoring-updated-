@@ -14,13 +14,21 @@ const dataRoutes = require("./routes/data.routes");
 const teachersRoutes = require("./routes/teachers.routes");
 const cleanupRoutes = require("./routes/cleanup.routes");
 
-env.validateEnv();
-
 const app = express();
 const clientDir = path.join(__dirname, "..", "client");
 const isVercel = Boolean(process.env.VERCEL);
 
 app.set("trust proxy", 1);
+
+// Validate env on first request (allows Vercel to bundle the function at build time)
+app.use((req, res, next) => {
+  try {
+    env.ensureEnv();
+    next();
+  } catch (err) {
+    res.status(err.status || 503).json({ error: err.message });
+  }
+});
 
 app.use(
   helmet({

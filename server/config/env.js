@@ -11,12 +11,23 @@ function getEnv(name, fallback = "") {
 function validateEnv() {
   const missing = required.filter((key) => !process.env[key]);
   if (missing.length) {
-    throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
+    const err = new Error(`Missing required environment variables: ${missing.join(", ")}`);
+    err.status = 503;
+    throw err;
   }
 }
 
+function ensureEnv() {
+  if (!ensureEnv._checked) {
+    validateEnv();
+    ensureEnv._checked = true;
+  }
+}
+ensureEnv._checked = false;
+
 module.exports = {
   validateEnv,
+  ensureEnv,
   port: Number(getEnv("PORT", "3000")),
   nodeEnv: getEnv("NODE_ENV", "development"),
   supabaseUrl: getEnv("SUPABASE_URL"),
