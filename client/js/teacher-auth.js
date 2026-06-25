@@ -89,7 +89,6 @@ async function logTeacherAudit(action, detail = "") {
   try {
     const session = getTeacherSession();
     const record = { action, detail };
-    record.user_name = session?.email || "teacher";
     if (session?.id) record.actor_id = session.id;
     await insertAuditLog(record);
   } catch (e) {

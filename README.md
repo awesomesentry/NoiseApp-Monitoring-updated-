@@ -110,7 +110,9 @@ npm run dev
    | `CORS_ORIGIN` | Optional (defaults to `*`) |
    | `CLEANUP_API_KEY` | Optional (for external cron) |
 
-5. Deploy. Vercel uses `vercel.json` to route `/api/*` to the Express server and static files from `client/`.
+5. Deploy. Vercel routes **all traffic** through `api/index.js`, which runs the Express app (API + static `client/` files).
+
+**Important:** The project root in Vercel must be the folder containing `vercel.json`, `api/index.js`, `server/`, and `client/` (not a parent monorepo folder unless configured).
 
 ### Scheduled Cleanup on Vercel
 
@@ -149,5 +151,10 @@ The original root-level HTML/JS files remain for reference. The active applicati
 - Set `SUPABASE_SERVICE_ROLE_KEY` in `server/.env`.
 - Ensure the `delete_expired_noise_events` RPC exists (see `supabase_migration.sql`).
 
+**Vercel 404 on `/api/*`**
+- Ensure `api/index.js` exists and `vercel.json` routes to it.
+- Redeploy after pushing — check Vercel → Deployment → Functions shows `api/index.js`.
+- Confirm environment variables `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set for Production.
+
 **Vercel 404 on pages**
-- Confirm `vercel.json` is at the project root and `client/` contains your HTML files.
+- Confirm `client/` contains your HTML files and the deployment includes the `api/index.js` function.

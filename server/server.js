@@ -18,6 +18,7 @@ env.validateEnv();
 
 const app = express();
 const clientDir = path.join(__dirname, "..", "client");
+const isVercel = Boolean(process.env.VERCEL);
 
 app.set("trust proxy", 1);
 
@@ -74,10 +75,13 @@ app.get("*", (req, res, next) => {
   next();
 });
 
+// JSON 404 for unknown API routes (avoid HTML fallback on /api/*)
+app.use("/api", notFound);
+
 app.use(notFound);
 app.use(errorHandler);
 
-if (require.main === module) {
+if (require.main === module && !isVercel) {
   app.listen(env.port, () => {
     console.log(`Noise Monitor server running on http://localhost:${env.port}`);
   });

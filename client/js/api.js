@@ -223,9 +223,15 @@ async function insertAuditLog(record) {
       record.actor_id = session.profile.id;
     }
   }
+  // audit_logs schema: id, actor_id, action, detail, created_at only
+  const payload = {
+    action: record.action,
+    detail: record.detail || "",
+    actor_id: record.actor_id || null,
+  };
   return apiRequest("/audit-logs", {
     method: "POST",
-    body: JSON.stringify(record),
+    body: JSON.stringify(payload),
   });
 }
 

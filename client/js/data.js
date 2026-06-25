@@ -262,9 +262,14 @@ function mapAuditRow(row) {
   const time = row.created_at
     ? new Date(row.created_at).toLocaleString()
     : row.time || "—";
+  const actorProfile = row.profiles || null;
   return {
     action: row.action || row.event_type || "Event",
-    user: row.user_name || row.username || row.user_id || "system",
+    user:
+      row.actor_name ||
+      actorProfile?.full_name ||
+      row.actor_id ||
+      "system",
     time,
     detail: row.detail || row.description || row.metadata || "—",
   };

@@ -25,10 +25,10 @@ BEGIN
 
   GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
 
-  INSERT INTO public.audit_logs (action, detail, user_name, created_at)
+  INSERT INTO public.audit_logs (action, detail, created_at)
   VALUES ('System cleanup',
     format('Deleted %s expired noise events older than %s days', v_deleted_count, v_retention_days),
-    'system', now());
+    now());
 
   RETURN v_deleted_count;
 END;

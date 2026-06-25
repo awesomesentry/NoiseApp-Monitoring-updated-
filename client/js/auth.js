@@ -122,9 +122,9 @@ async function logAdminAudit(action, detail = "") {
   try {
     const session = getSession();
     const record = { action, detail };
-    record.user_name = session?.email || "admin";
     if (session?.id) record.actor_id = session.id;
     await insertAuditLog(record);
   } catch (e) {
     console.warn("Audit log failed:", e);
   }
+}

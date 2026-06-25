@@ -923,3 +923,4 @@ async function initTeacherApp() {
   updateTeacherAutoRefresh();
 }
 
+initTeacherApp();

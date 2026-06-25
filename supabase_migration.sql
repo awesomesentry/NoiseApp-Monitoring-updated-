@@ -166,13 +166,12 @@ CREATE TRIGGER update_system_settings_updated_at
 CREATE OR REPLACE FUNCTION public.log_audit_event(
   p_action text,
   p_detail text DEFAULT '',
-  p_user_name text DEFAULT 'system',
   p_actor_id uuid DEFAULT NULL
 )
 RETURNS void AS $$
 BEGIN
-  INSERT INTO public.audit_logs (action, detail, user_name, actor_id, created_at)
-  VALUES (p_action, p_detail, p_user_name, p_actor_id, now());
+  INSERT INTO public.audit_logs (action, detail, actor_id, created_at)
+  VALUES (p_action, p_detail, p_actor_id, now());
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -203,11 +202,10 @@ BEGIN
   GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
 
   -- Log the cleanup action
-  INSERT INTO public.audit_logs (action, detail, user_name, created_at)
+  INSERT INTO public.audit_logs (action, detail, created_at)
   VALUES (
     'System cleanup',
     format('Deleted %s expired noise events older than %s days (cutoff: %s)', v_deleted_count, v_retention_days, v_cutoff),
-    'system',
     now()
   );
 
