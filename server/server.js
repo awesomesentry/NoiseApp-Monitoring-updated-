@@ -15,7 +15,7 @@ const teachersRoutes = require("./routes/teachers.routes");
 const cleanupRoutes = require("./routes/cleanup.routes");
 
 const app = express();
-const clientDir = path.join(__dirname, "..");
+const clientDir = path.join(__dirname, "..", "client");
 const isVercel = Boolean(process.env.VERCEL);
 
 app.set("trust proxy", 1);
