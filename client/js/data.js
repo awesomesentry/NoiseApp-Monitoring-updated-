@@ -15,9 +15,44 @@ const DEFAULT_SETTINGS = {
 let noiseEventsCache = null;
 let classroomsCache = null;
 
+const MANILA_TZ = "Asia/Manila";
+
+function getManilaDateParts(isoOrDate) {
+  const d = new Date(isoOrDate);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: MANILA_TZ,
+    weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type) => parts.find((p) => p.type === type)?.value || "";
+  const month = get("month").padStart(2, "0");
+  const day = get("day").padStart(2, "0");
+  const year = get("year");
+  const hour = parseInt(get("hour"), 10);
+  const minute = parseInt(get("minute"), 10);
+  return {
+    date: `${year}-${month}-${day}`,
+    time: d.toLocaleTimeString("en-US", {
+      timeZone: MANILA_TZ,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }),
+    hour,
+    minute,
+    dayShort: get("weekday"),
+    minutesOfDay: hour * 60 + minute,
+  };
+}
+
 function mapNoiseEvent(row) {
   const dt = row.event_time_utc || row.created_at;
-  const d = new Date(dt);
+  const manila = getManilaDateParts(dt);
   const color = (row.warning_color || "RED").toString().toLowerCase();
   let status = "red";
   if (color === "green" || color === "yellow") status = color;
@@ -25,8 +60,8 @@ function mapNoiseEvent(row) {
 
   return {
     id: row.id,
-    date: d.toISOString().slice(0, 10),
-    time: d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }),
+    date: manila.date,
+    time: manila.time,
     datetime: dt,
     room: row.room || row.device_id || "—",
     deviceId: row.device_id,

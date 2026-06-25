@@ -25,10 +25,15 @@ async function loginTeacher(email, password) {
       return null;
     }
 
-    // Load assigned classrooms
+    // Load assigned classrooms + schedule rooms (device IDs)
     const assignedClassrooms = await fetchTeacherClassrooms(user.id);
-    const assignedRooms = assignedClassrooms.map(c => c.name).filter(Boolean);
-    const deviceIds = []; // Device IDs would be set via admin
+    const classroomRooms = assignedClassrooms.map(c => c.name).filter(Boolean);
+    const scheduleSlots = await fetchTeacherSchedules(user.id).catch(() => []);
+    const scheduleRooms = (scheduleSlots || [])
+      .map((s) => s.room)
+      .filter((r) => r && r !== "—");
+    const assignedRooms = [...new Set([...classroomRooms, ...scheduleRooms])];
+    const deviceIds = [...assignedRooms];
 
     // Build session
     const session = {
@@ -227,11 +232,18 @@ async function syncTeacherSessionFromDb(session) {
     const profile = await getProfileById(session.id);
     if (!profile) return session;
     const classrooms = await fetchTeacherClassrooms(session.id);
-    const assignedRooms = classrooms.map(c => c.name).filter(Boolean);
+    const classroomRooms = classrooms.map(c => c.name).filter(Boolean);
+    const scheduleSlots = await fetchTeacherSchedules(session.id).catch(() => []);
+    const scheduleRooms = (scheduleSlots || [])
+      .map((s) => s.room)
+      .filter((r) => r && r !== "—");
+    const assignedRooms = [...new Set([...classroomRooms, ...scheduleRooms])];
+    const deviceIds = [...new Set([...(session.deviceIds || []), ...assignedRooms])];
     return {
       ...session,
       name: profile.full_name || session.name,
-      assignedRooms: assignedRooms,
+      assignedRooms,
+      deviceIds,
     };
   } catch (_) {
     return session;
@@ -250,16 +262,41 @@ function isWithinTeacherAccessWindow(datetime) {
   return eventTime >= cutoff;
 }
 
-function matchesTeacherAssignment(log, session) {
+function normalizeDeviceRoom(value) {
+  return (value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function deviceRoomMatches(a, b) {
+  const na = normalizeDeviceRoom(a);
+  const nb = normalizeDeviceRoom(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  return na.includes(nb) || nb.includes(na);
+}
+
+function getLogDeviceRoomKeys(log) {
+  return [log.room, log.deviceId].filter((v) => v && v !== "—");
+}
+
+function mergeTeacherIdentifiers(session, slots = []) {
+  const ids = new Set();
+  (session.assignedRooms || []).forEach((r) => ids.add(r));
+  (session.deviceIds || []).forEach((d) => ids.add(d));
+  (slots || []).forEach((s) => {
+    if (s.room && s.room !== "—") ids.add(s.room);
+  });
+  return [...ids];
+}
+
+function matchesTeacherAssignment(log, session, slots = []) {
   if (!session) return false;
-  const roomMatch =
-    session.assignedRooms?.length &&
-    session.assignedRooms.some(
-      (r) => r && (log.room === r || log.room?.includes(r))
-    );
-  const deviceMatch =
-    session.deviceIds?.length && session.deviceIds.includes(log.deviceId);
-  return roomMatch || deviceMatch;
+  const identifiers = mergeTeacherIdentifiers(session, slots);
+  if (!identifiers.length) return false;
+  const logKeys = getLogDeviceRoomKeys(log);
+  if (!logKeys.length) return false;
+  return identifiers.some((id) =>
+    logKeys.some((key) => deviceRoomMatches(key, id))
+  );
 }
 
 function isRedEvent(log) {
@@ -280,22 +317,35 @@ function teacherNameMatches(logTeacher, sessionName) {
   return a === b || a.includes(b) || b.includes(a);
 }
 
-async function eventMatchesTeacherSchedule(log, session) {
-  const schedule = await getTeacherScheduleDb(session.id);
-  const slots = schedule.slots || [];
-  if (slots.length === 0) return false;
-
+function getManilaEventParts(log) {
+  if (typeof getManilaDateParts === "function") {
+    return getManilaDateParts(log.datetime);
+  }
   const eventDate = new Date(log.datetime);
   const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const eventDay = dayNames[eventDate.getDay()];
-  const eventMins = eventDate.getHours() * 60 + eventDate.getMinutes();
+  return {
+    dayShort: dayNames[eventDate.getDay()],
+    minutesOfDay: eventDate.getHours() * 60 + eventDate.getMinutes(),
+  };
+}
+
+function eventMatchesTeacherSchedule(log, slots) {
+  if (!slots?.length) return false;
+
+  const manila = getManilaEventParts(log);
+  const eventDay = manila.dayShort;
+  const eventMins = manila.minutesOfDay;
 
   return slots.some((slot) => {
     const slotDay = slot.day ? slot.day.substring(0, 3) : slot.day;
-    const shortDay = dayNames.includes(slotDay) ? slotDay : (slot.day || "");
-    if (shortDay !== eventDay) return false;
+    if (slotDay !== eventDay) return false;
 
-    // Handle both time formats (HH:MM:SS or HH:MM)
+    const slotRoom = slot.room;
+    if (slotRoom && slotRoom !== "—") {
+      const logKeys = getLogDeviceRoomKeys(log);
+      if (!logKeys.some((k) => deviceRoomMatches(k, slotRoom))) return false;
+    }
+
     const startStr = slot.start_time || slot.startTime || "00:00";
     const endStr = slot.end_time || slot.endTime || "23:59";
     const [sh, sm] = startStr.split(":").map(Number);
@@ -312,20 +362,22 @@ async function eventMatchesTeacherSchedule(log, session) {
   });
 }
 
-async function matchesTeacherEvent(log, session) {
+async function matchesTeacherEvent(log, session, slots = null) {
   if (!session) return false;
 
-  const roomMatch = matchesTeacherAssignment(log, session);
-  if (!roomMatch) return false;
+  const scheduleSlots =
+    slots !== null ? slots : (await getTeacherScheduleDb(session.id)).slots || [];
+
+  if (!matchesTeacherAssignment(log, session, scheduleSlots)) return false;
 
   const ownName = teacherNameMatches(log.teacher, session.name);
 
   if (log.teacher && log.teacher !== "—") {
-    if (ownName) return eventMatchesTeacherSchedule(log, session);
+    if (ownName) return eventMatchesTeacherSchedule(log, scheduleSlots);
     return false;
   }
 
-  return eventMatchesTeacherSchedule(log, session);
+  return eventMatchesTeacherSchedule(log, scheduleSlots);
 }
 
 function filterLogsByDateTime(logs, fromDate, toDate, fromTime, toTime) {
@@ -333,8 +385,15 @@ function filterLogsByDateTime(logs, fromDate, toDate, fromTime, toTime) {
     if (fromDate && l.date < fromDate) return false;
     if (toDate && l.date > toDate) return false;
     if (fromTime || toTime) {
-      const eventDate = new Date(l.datetime);
-      const eventMins = eventDate.getHours() * 60 + eventDate.getMinutes();
+      const manila =
+        typeof getManilaDateParts === "function"
+          ? getManilaDateParts(l.datetime)
+          : {
+              minutesOfDay:
+                new Date(l.datetime).getHours() * 60 +
+                new Date(l.datetime).getMinutes(),
+            };
+      const eventMins = manila.minutesOfDay;
       const parseTime = (t) => {
         if (!t) return null;
         const [h, m] = t.split(":");
@@ -350,9 +409,15 @@ function filterLogsByDateTime(logs, fromDate, toDate, fromTime, toTime) {
 }
 
 async function filterTeacherEvents(logs, session) {
+  const schedule = await getTeacherScheduleDb(session.id);
+  const slots = schedule.slots || [];
   const results = [];
   for (const l of logs) {
-    if (isRedEvent(l) && await matchesTeacherEvent(l, session) && isWithinTeacherAccessWindow(l.datetime)) {
+    if (
+      isRedEvent(l) &&
+      (await matchesTeacherEvent(l, session, slots)) &&
+      isWithinTeacherAccessWindow(l.datetime)
+    ) {
       results.push(l);
     }
   }
