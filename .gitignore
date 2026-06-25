@@ -1,11 +1,14 @@
 # Environment variables (contains secrets)
 .env
+server/.env
 
-# Generated config (populated by build script)
+# Legacy generated config (no longer used by migrated client)
 js/config.js
+client/js/config.js
 
 # Node.js dependencies
 node_modules/
+server/node_modules/
 
 # OS files
 Thumbs.db

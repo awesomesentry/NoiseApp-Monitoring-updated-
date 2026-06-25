@@ -1,0 +1,14 @@
+{
+  "name": "noise-monitor",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Smart Classroom Noise Monitor — Node.js backend with static client",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js",
+    "postinstall": "cd server && npm install"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
