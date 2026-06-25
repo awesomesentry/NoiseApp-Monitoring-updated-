@@ -99,20 +99,21 @@ npm run dev
 
 1. Push the project to GitHub.
 2. Import the repo in [Vercel](https://vercel.com).
-3. Set **Root Directory** to the project folder (`NoiseApp-Monitoring-updated-`).
-4. Add environment variables in Vercel → Settings → Environment Variables:
+3. Set **Root Directory** to **`client`** (Project Settings → General → Root Directory).
+4. Add environment variables in Vercel → Settings → Environment Variables (Production):
 
    | Variable | Required |
    |----------|----------|
    | `SUPABASE_URL` | Yes |
    | `SUPABASE_ANON_KEY` | Yes |
    | `SUPABASE_SERVICE_ROLE_KEY` | Recommended |
-   | `CORS_ORIGIN` | Optional (defaults to `*`) |
-   | `CLEANUP_API_KEY` | Optional (for external cron) |
+   | `CORS_ORIGIN` | Optional |
 
-5. Deploy. Vercel routes **all traffic** through root `index.js` (not `api/index.js` — that breaks `/api/auth/*` paths).
+5. Deploy. Vercel uses `client/vercel.json` and `client/index.js` (Express serves `/api/*` and static HTML).
 
-**Important:** Do **not** put the Express entry inside an `api/` folder. Vercel treats each `api/*` path as a separate function, so `/api/auth/signup` returns 404 unless a matching file exists.
+6. Verify: `https://your-app.vercel.app/api/health` → `{"ok":true,"service":"noise-monitor-api"}`
+
+The backend lives at `client/server/` so it deploys together with the frontend when Root Directory is `client`.
 
 ### Scheduled Cleanup on Vercel
 
@@ -152,7 +153,7 @@ The original root-level HTML/JS files remain for reference. The active applicati
 - Ensure the `delete_expired_noise_events` RPC exists (see `supabase_migration.sql`).
 
 **Vercel 404 on `/api/*`**
-- Entry must be root `index.js`, **not** `api/index.js`.
-- Redeploy and check Vercel → Deployment → Functions shows `index.js`.
+- Confirm Vercel **Root Directory** is set to `client`.
+- Check deployment Functions tab shows `index.js` (inside the client bundle).
 - Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` in Vercel environment variables.
 - Test: `https://your-app.vercel.app/api/health` should return JSON.

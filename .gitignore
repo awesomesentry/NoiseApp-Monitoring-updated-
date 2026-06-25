@@ -9,6 +9,7 @@ client/js/config.js
 # Node.js dependencies
 node_modules/
 server/node_modules/
+client/node_modules/
 
 # OS files
 Thumbs.db

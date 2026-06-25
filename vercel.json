@@ -1,18 +1,19 @@
 {
+  "$comment": "Vercel Root Directory should be set to 'client' in project settings.",
   "version": 2,
   "builds": [
     {
-      "src": "index.js",
+      "src": "client/index.js",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["client/**", "server/**"]
+        "includeFiles": ["client/server/**", "client/css/**", "client/js/**", "client/*.html"]
       }
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "/index.js"
+      "dest": "/client/index.js"
     }
   ]
 }

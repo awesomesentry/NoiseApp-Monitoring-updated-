@@ -62,7 +62,12 @@ async function apiRequest(path, options = {}) {
   }
 
   if (!res.ok) {
-    const message = (data && data.error) || text || res.statusText;
+    let message = text || res.statusText;
+    if (data && typeof data === "object") {
+      message = data.error || data.message || data.msg || JSON.stringify(data);
+    } else if (data) {
+      message = String(data);
+    }
     throw new Error(message);
   }
 

@@ -14,12 +14,9 @@ const dataRoutes = require("./routes/data.routes");
 const teachersRoutes = require("./routes/teachers.routes");
 const cleanupRoutes = require("./routes/cleanup.routes");
 
-const fs = require("fs");
 const app = express();
-const clientInsideServer = fs.existsSync(path.join(__dirname, "..", "index.html"));
-const clientDir = clientInsideServer
-  ? path.join(__dirname, "..")
-  : path.join(__dirname, "..", "client");
+// When server lives at client/server/, static files are one level up (client/)
+const clientDir = path.join(__dirname, "..");
 const isVercel = Boolean(process.env.VERCEL);
 
 app.set("trust proxy", 1);
